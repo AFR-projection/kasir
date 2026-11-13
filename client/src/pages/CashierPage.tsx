@@ -2,13 +2,16 @@ import { FormEvent, useEffect, useMemo, useRef, useState } from "react";
 import { useQuery, useQueryClient } from "@tanstack/react-query";
 import {
   ArrowLeftRight,
+  BadgePercent,
   Banknote,
   ChevronDown,
   CreditCard,
   Minus,
   PackageSearch,
+  Pencil,
   Plus,
   QrCode,
+  RotateCcw,
   SearchX,
   ShoppingBasket,
   ShoppingCart,
@@ -26,6 +29,7 @@ import type {
 } from "../types";
 import { useDebouncedValue } from "../lib/hooks";
 import {
+  createClientReference,
   formatMoney,
   formatMoneyCompact,
   formatQuantity,
@@ -50,17 +54,24 @@ import {
 import { ProductImage } from "../components/ProductImage";
 import { ReceiptModal } from "../components/Receipt";
 import { CashSessionBar, CloseCashSessionModal, OpenCashSessionGate } from "../components/CashSession";
+import { CashExpensesModal } from "../components/CashExpenses";
 
 interface CartLine {
   productId: string;
   quantity: number;
+  negotiatedPrice?: number;
 }
 
 interface CartView {
   productId: string;
   quantity: number;
   product?: Product;
+  listUnitPrice: number;
+  unitPrice: number;
+  listLineTotal: number;
   lineTotal: number;
+  discountAmount: number;
+  negotiated: boolean;
 }
 
 const paymentOptions: Array<{
@@ -74,24 +85,6 @@ const paymentOptions: Array<{
   { id: "transfer", label: "Transfer", icon: <ArrowLeftRight size={18} /> },
 ];
 
-function createClientReference(): string {
-  if (typeof crypto !== "undefined" && typeof crypto.randomUUID === "function") {
-    return crypto.randomUUID();
-  }
-  const bytes = new Uint8Array(16);
-  if (typeof crypto !== "undefined" && typeof crypto.getRandomValues === "function") {
-    crypto.getRandomValues(bytes);
-  } else {
-    for (let index = 0; index < bytes.length; index += 1) {
-      bytes[index] = Math.floor(Math.random() * 256);
-    }
-  }
-  bytes[6] = (bytes[6] & 0x0f) | 0x40;
-  bytes[8] = (bytes[8] & 0x3f) | 0x80;
-  const hex = Array.from(bytes, (byte) => byte.toString(16).padStart(2, "0")).join("");
-  return `${hex.slice(0, 8)}-${hex.slice(8, 12)}-${hex.slice(12, 16)}-${hex.slice(16, 20)}-${hex.slice(20)}`;
-}
-
 export function CashierPage() {
   const toast = useToast();
   const queryClient = useQueryClient();
@@ -103,6 +96,8 @@ export function CashierPage() {
   const [cartOpen, setCartOpen] = useState(false);
   const [clearConfirmOpen, setClearConfirmOpen] = useState(false);
   const [closeSessionOpen, setCloseSessionOpen] = useState(false);
+  const [expensesOpen, setExpensesOpen] = useState(false);
+  const [negotiatingProductId, setNegotiatingProductId] = useState<string | null>(null);
   const [receipt, setReceipt] = useState<TransactionDetail | null>(null);
 
   const sessionQuery = useQuery({
@@ -128,6 +123,8 @@ export function CashierPage() {
       setCart([]);
       setPaymentOpen(false);
       setCartOpen(false);
+      setExpensesOpen(false);
+      setNegotiatingProductId(null);
     }
   }, [sessionQuery.data]);
 
@@ -147,18 +144,48 @@ export function CashierPage() {
     () =>
       cart.map((line) => {
         const product = productsById.get(line.productId);
+        if (!product) {
+          return {
+            productId: line.productId,
+            quantity: line.quantity,
+            listUnitPrice: 0,
+            unitPrice: 0,
+            listLineTotal: 0,
+            lineTotal: 0,
+            discountAmount: 0,
+            negotiated: false,
+          };
+        }
+
+        const listUnitPrice = roundMoneyValue(product.sellingPrice);
+        const hasNegotiatedPrice = line.negotiatedPrice !== undefined;
+        const unitPrice = hasNegotiatedPrice
+          ? roundMoneyValue(Math.min(listUnitPrice, Math.max(0, line.negotiatedPrice ?? 0)))
+          : listUnitPrice;
+        const listLineTotal = roundMoneyValue(listUnitPrice * line.quantity);
+        const lineTotal = roundMoneyValue(unitPrice * line.quantity);
+
         return {
           productId: line.productId,
           quantity: line.quantity,
           product,
-          lineTotal: product ? roundMoneyValue(product.sellingPrice * line.quantity) : 0,
+          listUnitPrice,
+          unitPrice,
+          listLineTotal,
+          lineTotal,
+          discountAmount: roundMoneyValue(listLineTotal - lineTotal),
+          negotiated: unitPrice < listUnitPrice,
         };
       }),
     [cart, productsById],
   );
 
-  const total = roundMoneyValue(cartView.reduce((sum, item) => sum + item.lineTotal, 0));
+  const subtotal = roundMoneyValue(cartView.reduce((sum, item) => sum + item.listLineTotal, 0));
+  const discountTotal = roundMoneyValue(cartView.reduce((sum, item) => sum + item.discountAmount, 0));
+  const total = roundMoneyValue(subtotal - discountTotal);
   const totalQuantity = roundQuantityValue(cartView.reduce((sum, item) => sum + item.quantity, 0));
+  const negotiatingLine =
+    cartView.find((line) => line.productId === negotiatingProductId) ?? null;
   const hasInvalidLine = cartView.some(
     (line) => !line.product || !line.product.isActive || line.quantity <= 0 || line.quantity > line.product.stock,
   );
@@ -195,6 +222,16 @@ export function CashierPage() {
     );
   };
 
+  const setNegotiatedPrice = (productId: string, price: number | null) => {
+    setCart((current) =>
+      current.map((line) =>
+        line.productId === productId
+          ? { ...line, negotiatedPrice: price === null ? undefined : roundMoneyValue(price) }
+          : line,
+      ),
+    );
+  };
+
   const changeQuantity = (productId: string, direction: 1 | -1) => {
     const line = cart.find((item) => item.productId === productId);
     const product = productsById.get(productId);
@@ -216,6 +253,7 @@ export function CashierPage() {
     setCart([]);
     setPaymentOpen(false);
     setCartOpen(false);
+    setNegotiatingProductId(null);
     setReceipt(transaction);
     toast.success(`Pembayaran ${transaction.invoiceNumber} berhasil.`);
     void queryClient.invalidateQueries({ queryKey: ["cash-session"] });
@@ -235,6 +273,8 @@ export function CashierPage() {
     setCart([]);
     setPaymentOpen(false);
     setCartOpen(false);
+    setExpensesOpen(false);
+    setNegotiatingProductId(null);
     setReceipt(null);
     queryClient.setQueryData<CashSessionCurrentResponse>(["cash-session", "current"], {
       session: null,
@@ -297,7 +337,11 @@ export function CashierPage() {
   return (
     <div className="pos-page">
       <div className="pos-catalog">
-        <CashSessionBar session={activeSession} onClose={() => setCloseSessionOpen(true)} />
+        <CashSessionBar
+          session={activeSession}
+          onExpenses={() => setExpensesOpen(true)}
+          onClose={() => setCloseSessionOpen(true)}
+        />
 
         <header className="pos-heading">
           <div>
@@ -490,9 +534,33 @@ export function CashierPage() {
                     <div className="cart-line__title">
                       <div>
                         <strong>{product.name}</strong>
-                        <span>
-                          {formatMoney(product.sellingPrice)} / {product.unit}
-                        </span>
+                        <button
+                          type="button"
+                          className={`cart-line__price${line.negotiated ? " cart-line__price--negotiated" : ""}`}
+                          onClick={() => setNegotiatingProductId(product.id)}
+                          aria-label={`Atur harga nego ${product.name}`}
+                        >
+                          {line.negotiated ? (
+                            <>
+                              <s>{formatMoney(line.listUnitPrice)}</s>
+                              <strong>{formatMoney(line.unitPrice)}</strong>
+                              <span>/ {product.unit}</span>
+                            </>
+                          ) : (
+                            <span>
+                              {formatMoney(line.listUnitPrice)} / {product.unit}
+                            </span>
+                          )}
+                          <span className="cart-line__nego">
+                            <Pencil size={10} />
+                            Nego
+                          </span>
+                        </button>
+                        {line.discountAmount > 0 && (
+                          <span className="cart-line__savings">
+                            Hemat {formatMoney(line.discountAmount)}
+                          </span>
+                        )}
                       </div>
                       <button
                         type="button"
@@ -527,7 +595,10 @@ export function CashierPage() {
                           <Plus size={14} />
                         </button>
                       </div>
-                      <strong className="cart-line__total">{formatMoney(line.lineTotal)}</strong>
+                      <span className="cart-line__amount">
+                        {line.negotiated && <s>{formatMoney(line.listLineTotal)}</s>}
+                        <strong className="cart-line__total">{formatMoney(line.lineTotal)}</strong>
+                      </span>
                     </div>
 
                     {overStock && (
@@ -555,9 +626,24 @@ export function CashierPage() {
               {formatQuantity(totalQuantity)} unit · {cartLineCount} produk
             </span>
           </div>
+          {discountTotal > 0 && (
+            <>
+              <div className="cart-summary-row">
+                <span>Harga normal</span>
+                <span>{formatMoney(subtotal)}</span>
+              </div>
+              <div className="cart-summary-row cart-summary-row--discount">
+                <span>Diskon nego</span>
+                <span>−{formatMoney(discountTotal)}</span>
+              </div>
+            </>
+          )}
           <div className="cart-summary-total">
             <span>Total</span>
-            <strong>{formatMoney(total)}</strong>
+            <span className="cart-summary-total__value">
+              {discountTotal > 0 && <small>Hemat {formatMoney(discountTotal)}</small>}
+              <strong>{formatMoney(total)}</strong>
+            </span>
           </div>
           {hasInvalidLine && cart.length > 0 && (
             <p className="cart-summary-warning">Periksa kembali jumlah atau ketersediaan produk.</p>
@@ -592,10 +678,27 @@ export function CashierPage() {
       {paymentOpen && (
         <PaymentModal
           cart={cartView}
+          subtotal={subtotal}
+          discountTotal={discountTotal}
           total={total}
           onClose={() => setPaymentOpen(false)}
           onSuccess={handlePaymentSuccess}
         />
+      )}
+
+      {negotiatingLine && (
+        <PriceNegotiationModal
+          line={negotiatingLine}
+          onClose={() => setNegotiatingProductId(null)}
+          onApply={(price) => {
+            setNegotiatedPrice(negotiatingLine.productId, price);
+            setNegotiatingProductId(null);
+          }}
+        />
+      )}
+
+      {expensesOpen && (
+        <CashExpensesModal session={activeSession} onClose={() => setExpensesOpen(false)} />
       )}
 
       <ReceiptModal transaction={receipt} onClose={() => setReceipt(null)} />
@@ -665,17 +768,207 @@ function CartQuantityInput({
 
 interface PaymentModalProps {
   cart: CartView[];
+  subtotal: number;
+  discountTotal: number;
   total: number;
   onClose: () => void;
   onSuccess: (transaction: TransactionDetail) => void;
 }
 
-function PaymentModal({ cart, total, onClose, onSuccess }: PaymentModalProps) {
+interface PriceNegotiationModalProps {
+  line: CartView;
+  onClose: () => void;
+  onApply: (price: number | null) => void;
+}
+
+function PriceNegotiationModal({ line, onClose, onApply }: PriceNegotiationModalProps) {
+  const product = line.product;
+  const [input, setInput] = useState(String(line.unitPrice));
+  const [error, setError] = useState("");
+
+  if (!product) return null;
+
+  const normalPrice = line.listUnitPrice;
+  const costPrice = roundMoneyValue(product.costPrice);
+  const floorPrice = costPrice > 0 ? costPrice : 0;
+  const numericValue = Number(input);
+  const hasInput = input.trim() !== "" && Number.isFinite(numericValue);
+  const previewPrice = hasInput
+    ? roundMoneyValue(Math.min(normalPrice, Math.max(0, numericValue)))
+    : line.unitPrice;
+  const previewLineTotal = roundMoneyValue(previewPrice * line.quantity);
+  const saving = roundMoneyValue(line.listLineTotal - previewLineTotal);
+  const savingPercent =
+    normalPrice > 0 ? Math.max(0, Math.round(((normalPrice - previewPrice) / normalPrice) * 100)) : 0;
+
+  const validate = (): string => {
+    if (input.trim() === "" || !Number.isFinite(numericValue)) {
+      return "Masukkan harga nego yang valid.";
+    }
+    if (numericValue < 0) return "Harga nego tidak boleh negatif.";
+    if (numericValue > normalPrice) {
+      return `Harga nego tidak boleh melebihi harga normal (${formatMoney(normalPrice)}).`;
+    }
+    if (costPrice > 0 && numericValue < costPrice) {
+      return `Harga nego di bawah harga modal. Harga minimal ${formatMoney(costPrice)}.`;
+    }
+    return "";
+  };
+
+  const handleSubmit = (event: FormEvent) => {
+    event.preventDefault();
+    const validationError = validate();
+    if (validationError) {
+      setError(validationError);
+      return;
+    }
+    onApply(roundMoneyValue(numericValue) === normalPrice ? null : roundMoneyValue(numericValue));
+  };
+
+  const quickDiscounts = [5, 10, 15, 20];
+
+  return (
+    <Modal
+      open
+      onClose={onClose}
+      title="Nego Harga"
+      subtitle={`${product.name} · ${formatQuantity(product.stock)} ${product.unit} tersedia`}
+      size="sm"
+      footer={
+        <>
+          <Button variant="ghost" onClick={onClose}>
+            Batal
+          </Button>
+          <Button
+            type="submit"
+            form="price-negotiation-form"
+            icon={<BadgePercent size={17} />}
+          >
+            Terapkan Harga
+          </Button>
+        </>
+      }
+    >
+      <form id="price-negotiation-form" className="form-stack" onSubmit={handleSubmit} noValidate>
+        <div className="price-negotiation__product">
+          <ProductImage src={product.imageUrl} name={product.name} size="sm" />
+          <div>
+            <strong>{product.name}</strong>
+            <span>
+              Harga normal <b>{formatMoney(normalPrice)}</b> / {product.unit}
+            </span>
+          </div>
+        </div>
+
+        <Field
+          label={`Harga nego per ${product.unit}`}
+          htmlFor="negotiated-price"
+          hint={
+            costPrice > 0
+              ? `Harga minimal ${formatMoney(costPrice)} (harga modal).`
+              : "Harga modal belum diatur. Harga nego maksimal sebesar harga normal."
+          }
+          required
+        >
+          <div className="payment-input">
+            <span>Rp</span>
+            <input
+              id="negotiated-price"
+              type="number"
+              inputMode="decimal"
+              min={floorPrice}
+              max={normalPrice}
+              step="100"
+              value={input}
+              onChange={(event) => {
+                setInput(event.target.value);
+                setError("");
+              }}
+              autoFocus
+            />
+          </div>
+        </Field>
+
+        <div className="price-negotiation__quick" aria-label="Diskon cepat">
+          {quickDiscounts.map((percent) => {
+            const price = Math.max(floorPrice, Math.round(normalPrice * (1 - percent / 100)));
+            return (
+              <button
+                key={percent}
+                type="button"
+                className={`price-negotiation__quick-btn${
+                  roundMoneyValue(numericValue) === price ? " price-negotiation__quick-btn--active" : ""
+                }`}
+                onClick={() => {
+                  setInput(String(price));
+                  setError("");
+                }}
+                disabled={price >= normalPrice}
+              >
+                <strong>−{percent}%</strong>
+                <span>{formatMoneyCompact(price)}</span>
+              </button>
+            );
+          })}
+        </div>
+
+        <div className="price-negotiation__preview">
+          <div>
+            <span>Harga normal</span>
+            <strong>
+              <s>{formatMoney(normalPrice)}</s>
+            </strong>
+          </div>
+          <div>
+            <span>Harga nego</span>
+            <strong>{formatMoney(previewPrice)}</strong>
+          </div>
+          <div className="price-negotiation__preview-saving">
+            <span>Hemat</span>
+            <strong>
+              {formatMoney(saving)} {savingPercent > 0 && <small>({savingPercent}%)</small>}
+            </strong>
+          </div>
+        </div>
+
+        <div className="price-negotiation__line-total">
+          <span>
+            {formatQuantity(line.quantity)} {product.unit} × {formatMoney(previewPrice)}
+          </span>
+          <strong>{formatMoney(previewLineTotal)}</strong>
+        </div>
+
+        {line.negotiated && (
+          <button
+            type="button"
+            className="price-negotiation__reset"
+            onClick={() => onApply(null)}
+          >
+            <RotateCcw size={13} />
+            Kembalikan ke harga normal
+          </button>
+        )}
+
+        {error && <div className="auth-alert auth-alert--error">{error}</div>}
+      </form>
+    </Modal>
+  );
+}
+
+function PaymentModal({
+  cart,
+  subtotal,
+  discountTotal,
+  total,
+  onClose,
+  onSuccess,
+}: PaymentModalProps) {
   const toast = useToast();
   const queryClient = useQueryClient();
   const [method, setMethod] = useState<PaymentMethod>("cash");
   const [paid, setPaid] = useState("");
   const [notes, setNotes] = useState("");
+  const [discountReason, setDiscountReason] = useState("");
   const [submitting, setSubmitting] = useState(false);
   const [error, setError] = useState("");
   const clientReference = useRef(createClientReference());
@@ -684,6 +977,10 @@ function PaymentModal({ cart, total, onClose, onSuccess }: PaymentModalProps) {
   const changeDue = roundMoneyValue(Math.max(0, amountPaid - total));
   const sufficient = method !== "cash" || amountPaid >= total;
   const totalItems = roundQuantityValue(cart.reduce((sum, line) => sum + line.quantity, 0));
+  const negotiatedLines = useMemo(
+    () => cart.filter((line) => line.discountAmount > 0 && line.product),
+    [cart],
+  );
 
   const suggestions = useMemo(() => {
     const values = new Set<number>();
@@ -710,10 +1007,15 @@ function PaymentModal({ cart, total, onClose, onSuccess }: PaymentModalProps) {
     setSubmitting(true);
     try {
       const result = await api.transactions.checkout({
-        items: cart.map((line) => ({ productId: line.productId, quantity: line.quantity })),
+        items: cart.map((line) => ({
+          productId: line.productId,
+          quantity: line.quantity,
+          unitPrice: line.negotiated ? line.unitPrice : undefined,
+        })),
         paymentMethod: method,
         amountPaid: method === "cash" ? roundMoneyValue(amountPaid) : total,
         notes: notes.trim() || undefined,
+        discountReason: discountTotal > 0 ? discountReason.trim() || undefined : undefined,
         clientReference: clientReference.current,
       });
       await Promise.all([
@@ -766,10 +1068,50 @@ function PaymentModal({ cart, total, onClose, onSuccess }: PaymentModalProps) {
     >
       <form id="payment-form" onSubmit={handleSubmit} className="form-stack" noValidate>
         <div className="payment-total-card">
-          <span>Total tagihan</span>
+          <span>{discountTotal > 0 ? "Total setelah nego" : "Total tagihan"}</span>
           <strong>{formatMoney(total)}</strong>
-          <p>{formatQuantity(totalItems)} unit dari {cart.length} produk</p>
+          {discountTotal > 0 ? (
+            <p>
+              Harga normal <s>{formatMoney(subtotal)}</s> · Hemat {formatMoney(discountTotal)}
+            </p>
+          ) : (
+            <p>{formatQuantity(totalItems)} unit dari {cart.length} produk</p>
+          )}
         </div>
+
+        {negotiatedLines.length > 0 && (
+          <div className="payment-negotiation-card">
+            <div className="payment-negotiation-card__head">
+              <BadgePercent size={16} />
+              <strong>Rincian harga nego</strong>
+              <span>{negotiatedLines.length} produk</span>
+            </div>
+            <div className="payment-negotiation-list">
+              {negotiatedLines.map((line) => (
+                <div className="payment-negotiation-item" key={line.productId}>
+                  <div>
+                    <strong>{line.product?.name}</strong>
+                    <span>
+                      {formatQuantity(line.quantity)} {line.product?.unit}
+                    </span>
+                  </div>
+                  <div className="payment-negotiation-item__price">
+                    <s>{formatMoney(line.listUnitPrice)}</s>
+                    <strong>{formatMoney(line.unitPrice)}</strong>
+                    <span>/ {line.product?.unit}</span>
+                  </div>
+                  <span className="payment-negotiation-item__saving">
+                    −{formatMoney(line.discountAmount)}
+                  </span>
+                </div>
+              ))}
+            </div>
+            <div className="payment-negotiation-card__total">
+              <span>Total diskon nego</span>
+              <strong>−{formatMoney(discountTotal)}</strong>
+            </div>
+          </div>
+        )}
 
         <div>
           <span className="field__label">Metode pembayaran</span>
@@ -847,6 +1189,24 @@ function PaymentModal({ cart, total, onClose, onSuccess }: PaymentModalProps) {
               <p>Nominal pembayaran tercatat sebesar {formatMoney(total)}.</p>
             </div>
           </div>
+        )}
+
+        {discountTotal > 0 && (
+          <Field
+            label="Catatan nego / diskon"
+            htmlFor="payment-discount-reason"
+            hint="Opsional, misalnya nama pelanggan atau alasan harga turun."
+          >
+            <input
+              id="payment-discount-reason"
+              className="input"
+              type="text"
+              value={discountReason}
+              onChange={(event) => setDiscountReason(event.target.value)}
+              placeholder="Contoh: langganan, beli banyak, buah sedikit lecet..."
+              maxLength={300}
+            />
+          </Field>
         )}
 
         <Field label="Catatan transaksi" htmlFor="payment-notes" hint="Opsional, misalnya nama pelanggan atau catatan pesanan.">

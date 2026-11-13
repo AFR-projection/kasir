@@ -9,6 +9,7 @@ import {
   ReceiptText,
   ShieldCheck,
   Unlock,
+  Wallet,
 } from "lucide-react";
 import { api } from "../lib/api";
 import type { CashSession } from "../types";
@@ -170,6 +171,11 @@ export function OpenCashSessionGate({
               <span>
                 Seharusnya <strong>{formatMoney(lastClosed.expectedCash)}</strong>
               </span>
+              {lastClosed.totalExpenses > 0 && (
+                <span>
+                  Pengeluaran <strong>{formatMoney(lastClosed.totalExpenses)}</strong>
+                </span>
+              )}
               <span className={differenceClass(lastClosed.difference)}>
                 Selisih <strong>{signedMoney(lastClosed.difference ?? 0)}</strong>
               </span>
@@ -209,7 +215,7 @@ export function OpenCashSessionGate({
         </ol>
         <div className="cash-gate__note">
           <Calculator size={17} />
-          <p>Rumus uang laci: kas awal + seluruh penjualan tunai.</p>
+          <p>Rumus uang laci: kas awal + seluruh penjualan tunai − pengeluaran kas.</p>
         </div>
       </aside>
     </div>
@@ -218,9 +224,11 @@ export function OpenCashSessionGate({
 
 export function CashSessionBar({
   session,
+  onExpenses,
   onClose,
 }: {
   session: CashSession;
+  onExpenses: () => void;
   onClose: () => void;
 }) {
   return (
@@ -251,15 +259,33 @@ export function CashSessionBar({
           <span>Penjualan tunai</span>
           <strong>{formatMoney(session.cashSales)}</strong>
         </div>
+        <div
+          className={`cash-session-bar__expenses${
+            session.totalExpenses > 0 ? " cash-session-bar__expenses--active" : ""
+          }`}
+        >
+          <span>Pengeluaran</span>
+          <strong>−{formatMoney(session.totalExpenses)}</strong>
+        </div>
         <div className="cash-session-bar__expected">
           <span>Estimasi laci</span>
           <strong>{formatMoney(session.expectedCash)}</strong>
         </div>
       </div>
 
-      <Button variant="secondary" size="sm" icon={<LockKeyhole size={15} />} onClick={onClose}>
-        Tutup Kas
-      </Button>
+      <div className="cash-session-bar__actions">
+        <Button
+          variant="ghost"
+          size="sm"
+          icon={<Wallet size={15} />}
+          onClick={onExpenses}
+        >
+          Pengeluaran
+        </Button>
+        <Button variant="secondary" size="sm" icon={<LockKeyhole size={15} />} onClick={onClose}>
+          Tutup Kas
+        </Button>
+      </div>
     </section>
   );
 }
@@ -361,16 +387,30 @@ export function CloseCashSessionModal({
             <span>Transaksi</span>
             <strong>{session.transactionCount}</strong>
           </div>
+          <div className={session.totalExpenses > 0 ? "cash-close-summary__expense" : ""}>
+            <span>Pengeluaran kas</span>
+            <strong>−{formatMoney(session.totalExpenses)}</strong>
+          </div>
         </div>
 
         <div className="cash-expected-card">
           <div>
             <span>Uang laci seharusnya</span>
             <strong>{formatMoney(session.expectedCash)}</strong>
-            <p>Kas awal + seluruh penjualan tunai pada sesi ini.</p>
+            <p>Kas awal + penjualan tunai − pengeluaran kas pada sesi ini.</p>
           </div>
           <Calculator size={26} />
         </div>
+
+        {session.totalExpenses > 0 && (
+          <div className="cash-expense-note">
+            <Wallet size={17} />
+            <p>
+              Pengeluaran kas sebesar <strong>{formatMoney(session.totalExpenses)}</strong> sudah
+              dikurangkan dari estimasi uang laci. Periksa daftar pengeluaran sebelum menutup kas.
+            </p>
+          </div>
+        )}
 
         <Field
           label="Uang tunai hasil hitung laci"

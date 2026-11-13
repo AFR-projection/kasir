@@ -35,6 +35,7 @@ interface CashSessionRow {
   total_sales: number;
   cash_sales: number;
   non_cash_sales: number;
+  total_expenses: number;
 }
 
 export interface CashSessionDto {
@@ -54,25 +55,32 @@ export interface CashSessionDto {
   totalSales: number;
   cashSales: number;
   nonCashSales: number;
+  totalExpenses: number;
 }
 
 const sessionSelect = `
   SELECT cs.id, cs.status, cs.opening_cash, cs.counted_cash, cs.expected_cash, cs.difference,
          cs.opening_notes, cs.closing_notes, cs.opened_by, ob.name AS opened_by_name,
          cs.closed_by, cb.name AS closed_by_name, cs.opened_at, cs.closed_at,
-         COUNT(t.id)::int AS transaction_count,
-         COALESCE(SUM(t.total), 0)::numeric AS total_sales,
-         COALESCE(SUM(t.total) FILTER (WHERE t.payment_method = 'cash'), 0)::numeric AS cash_sales,
-         COALESCE(SUM(t.total) FILTER (WHERE t.payment_method <> 'cash'), 0)::numeric AS non_cash_sales
+         (SELECT COUNT(*)::int
+            FROM transactions t WHERE t.cash_session_id = cs.id) AS transaction_count,
+         (SELECT COALESCE(SUM(t.total), 0)::numeric
+            FROM transactions t WHERE t.cash_session_id = cs.id) AS total_sales,
+         (SELECT COALESCE(SUM(t.total) FILTER (WHERE t.payment_method = 'cash'), 0)::numeric
+            FROM transactions t WHERE t.cash_session_id = cs.id) AS cash_sales,
+         (SELECT COALESCE(SUM(t.total) FILTER (WHERE t.payment_method <> 'cash'), 0)::numeric
+            FROM transactions t WHERE t.cash_session_id = cs.id) AS non_cash_sales,
+         (SELECT COALESCE(SUM(e.amount), 0)::numeric
+            FROM cash_expenses e WHERE e.cash_session_id = cs.id) AS total_expenses
   FROM cash_sessions cs
   JOIN users ob ON ob.id = cs.opened_by
   LEFT JOIN users cb ON cb.id = cs.closed_by
-  LEFT JOIN transactions t ON t.cash_session_id = cs.id
 `;
 
 function mapCashSession(row: CashSessionRow): CashSessionDto {
   const openingCash = Number(row.opening_cash);
   const cashSales = Number(row.cash_sales);
+  const totalExpenses = Number(row.total_expenses);
   const isClosed = row.status === "closed";
 
   return {
@@ -82,7 +90,7 @@ function mapCashSession(row: CashSessionRow): CashSessionDto {
     countedCash: row.counted_cash === null ? null : Number(row.counted_cash),
     expectedCash: isClosed && row.expected_cash !== null
       ? Number(row.expected_cash)
-      : roundMoney(openingCash + cashSales),
+      : roundMoney(openingCash + cashSales - totalExpenses),
     difference: row.difference === null ? null : Number(row.difference),
     openingNotes: row.opening_notes,
     closingNotes: row.closing_notes,
@@ -96,6 +104,7 @@ function mapCashSession(row: CashSessionRow): CashSessionDto {
     totalSales: Number(row.total_sales),
     cashSales,
     nonCashSales: Number(row.non_cash_sales),
+    totalExpenses,
   };
 }
 
@@ -105,8 +114,7 @@ async function getCashSessionById(
 ): Promise<CashSessionDto | null> {
   const result = await client.query<CashSessionRow>(
     `${sessionSelect}
-     WHERE cs.id = $1
-     GROUP BY cs.id, ob.name, cb.name`,
+     WHERE cs.id = $1`,
     [id],
   );
   return result.rows[0] ? mapCashSession(result.rows[0]) : null;
@@ -161,7 +169,6 @@ cashSessionsRouter.get(
 
     const listResult = await pool.query<CashSessionRow>(
       `${sessionSelect}
-       GROUP BY cs.id, ob.name, cb.name
        ORDER BY cs.opened_at DESC
        LIMIT $1 OFFSET $2`,
       [query.limit, offset],
@@ -266,8 +273,15 @@ cashSessionsRouter.post(
          WHERE cash_session_id = $1`,
         [id],
       );
+      const expensesResult = await client.query<{ total_expenses: number }>(
+        `SELECT COALESCE(SUM(amount), 0)::numeric AS total_expenses
+         FROM cash_expenses
+         WHERE cash_session_id = $1`,
+        [id],
+      );
       const cashSales = Number(salesResult.rows[0].cash_sales);
-      const expectedCash = roundMoney(Number(session.opening_cash) + cashSales);
+      const totalExpenses = Number(expensesResult.rows[0].total_expenses);
+      const expectedCash = roundMoney(Number(session.opening_cash) + cashSales - totalExpenses);
       const difference = roundMoney(countedCash - expectedCash);
 
       if (difference !== 0 && !body.notes) {

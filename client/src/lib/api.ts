@@ -2,6 +2,9 @@ import type {
   AccountUser,
   AdjustmentInput,
   AuthMeResponse,
+  CashExpense,
+  CashExpenseListResponse,
+  CashExpenseQuery,
   CashSession,
   CashSessionCurrentResponse,
   CashSessionListResponse,
@@ -10,6 +13,7 @@ import type {
   CheckoutInput,
   CheckoutResponse,
   CloseCashSessionInput,
+  CreateCashExpenseInput,
   CreateProductInput,
   DashboardData,
   Product,
@@ -202,6 +206,16 @@ export const api = {
       }),
     list: (params: CashSessionQuery = {}) =>
       request<CashSessionListResponse>(`/cash-sessions${toQuery(params)}`),
+  },
+  expenses: {
+    list: (params: CashExpenseQuery = {}) =>
+      request<CashExpenseListResponse>(`/expenses${toQuery(params)}`),
+    create: (input: CreateCashExpenseInput) =>
+      request<{ expense: CashExpense; alreadyProcessed: boolean; message: string }>("/expenses", {
+        method: "POST",
+        body: input,
+      }),
+    remove: (id: string) => request<{ message: string }>(`/expenses/${id}`, { method: "DELETE" }),
   },
   dashboard: {
     get: () => request<DashboardData>("/dashboard"),

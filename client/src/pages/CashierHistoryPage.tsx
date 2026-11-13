@@ -208,6 +208,11 @@ export function CashierHistoryPage() {
                   <div className="cashier-transaction-card__amount">
                     <span>Total</span>
                     <strong>{formatMoney(transaction.total)}</strong>
+                    {transaction.discountTotal > 0 && (
+                      <span className="cashier-transaction-card__discount">
+                        Hemat {formatMoney(transaction.discountTotal)}
+                      </span>
+                    )}
                   </div>
                   <Button
                     variant="secondary"

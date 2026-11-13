@@ -10,6 +10,7 @@ export type RealtimeEventType =
   | "stock.adjusted"
   | "transaction.created"
   | "cash-session.changed"
+  | "cash-expense.changed"
   | "user.changed"
   | "settings.updated";
 

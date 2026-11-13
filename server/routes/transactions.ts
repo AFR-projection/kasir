@@ -30,6 +30,7 @@ interface TransactionDetailRow extends TransactionSummaryRow {
   amount_paid: number;
   change_due: number;
   notes: string | null;
+  discount_reason: string | null;
 }
 
 interface TransactionItemRow {
@@ -38,7 +39,9 @@ interface TransactionItemRow {
   product_name: string;
   unit: string;
   quantity: number;
+  list_unit_price: number;
   unit_price: number;
+  discount_amount: number;
   line_total: number;
 }
 
@@ -52,11 +55,21 @@ interface LockedProductRow {
   is_active: boolean;
 }
 
+const rupiahFormatter = new Intl.NumberFormat("id-ID", {
+  style: "currency",
+  currency: "IDR",
+  minimumFractionDigits: 0,
+});
+
+function formatRupiah(value: number): string {
+  return rupiahFormatter.format(value);
+}
+
 async function getTransactionDetailById(id: string): Promise<TransactionDetailDto | null> {
   const result = await pool.query<TransactionDetailRow>(
     `SELECT t.id, t.invoice_number, t.cashier_id, u.name AS cashier_name,
-            t.subtotal, t.total, t.payment_method, t.amount_paid, t.change_due,
-            t.notes, t.created_at,
+            t.subtotal, t.discount_total, t.discount_reason, t.total,
+            t.payment_method, t.amount_paid, t.change_due, t.notes, t.created_at,
             (SELECT COUNT(*)::int FROM transaction_items ti WHERE ti.transaction_id = t.id) AS item_count
      FROM transactions t
      JOIN users u ON u.id = t.cashier_id
@@ -67,22 +80,30 @@ async function getTransactionDetailById(id: string): Promise<TransactionDetailDt
   if (!row) return null;
 
   const itemsResult = await pool.query<TransactionItemRow>(
-    `SELECT id, product_id, product_name, unit, quantity, unit_price, line_total
+    `SELECT id, product_id, product_name, unit, quantity, list_unit_price,
+            unit_price, discount_amount, line_total
      FROM transaction_items
      WHERE transaction_id = $1
      ORDER BY created_at ASC, id ASC`,
     [id],
   );
 
-  const items: TransactionItemDto[] = itemsResult.rows.map((item) => ({
-    id: item.id,
-    productId: item.product_id,
-    productName: item.product_name,
-    unit: item.unit,
-    quantity: Number(item.quantity),
-    unitPrice: Number(item.unit_price),
-    lineTotal: Number(item.line_total),
-  }));
+  const items: TransactionItemDto[] = itemsResult.rows.map((item) => {
+    const lineTotal = Number(item.line_total);
+    const discountAmount = Number(item.discount_amount);
+    return {
+      id: item.id,
+      productId: item.product_id,
+      productName: item.product_name,
+      unit: item.unit,
+      quantity: Number(item.quantity),
+      listUnitPrice: Number(item.list_unit_price),
+      unitPrice: Number(item.unit_price),
+      listLineTotal: roundMoney(lineTotal + discountAmount),
+      discountAmount,
+      lineTotal,
+    };
+  });
 
   const summary = mapTransactionSummary(row);
   return {
@@ -91,6 +112,7 @@ async function getTransactionDetailById(id: string): Promise<TransactionDetailDt
     amountPaid: Number(row.amount_paid),
     changeDue: Number(row.change_due),
     notes: row.notes,
+    discountReason: row.discount_reason,
     items,
     store: await getStore(),
   };
@@ -155,7 +177,7 @@ transactionsRouter.get(
     const listValues = [...values, query.limit, offset];
     const result = await pool.query<TransactionSummaryRow>(
       `SELECT t.id, t.invoice_number, t.cashier_id, u.name AS cashier_name,
-              t.total, t.payment_method, t.created_at,
+              t.total, t.discount_total, t.payment_method, t.created_at,
               (SELECT COUNT(*)::int FROM transaction_items ti WHERE ti.transaction_id = t.id) AS item_count
        FROM transactions t
        JOIN users u ON u.id = t.cashier_id
@@ -202,14 +224,23 @@ transactionsRouter.post(
     const body = transactionInputSchema.parse(req.body);
     const paymentAmount = roundMoney(body.amountPaid);
 
-    const aggregated = new Map<string, number>();
+    const requestedItems = new Map<string, { quantity: number; unitPrice: number | null }>();
     for (const item of body.items) {
-      aggregated.set(item.productId, roundQuantity((aggregated.get(item.productId) ?? 0) + item.quantity));
+      if (requestedItems.has(item.productId)) {
+        throw new AppError(400, "Produk yang sama tidak boleh muncul lebih dari sekali dalam keranjang.", {
+          code: "DUPLICATE_PRODUCT",
+        });
+      }
+      const quantity = roundQuantity(item.quantity);
+      if (quantity <= 0) {
+        throw new AppError(400, "Jumlah produk tidak valid.");
+      }
+      requestedItems.set(item.productId, {
+        quantity,
+        unitPrice: item.unitPrice === undefined ? null : roundMoney(item.unitPrice),
+      });
     }
-    const productIds = Array.from(aggregated.keys()).sort();
-    if (productIds.some((id) => (aggregated.get(id) ?? 0) <= 0)) {
-      throw new AppError(400, "Jumlah produk tidak valid.");
-    }
+    const productIds = Array.from(requestedItems.keys()).sort();
 
     try {
       const outcome = await withTransaction(async (client) => {
@@ -258,14 +289,19 @@ transactionsRouter.post(
         const saleItems: Array<{
           product: LockedProductRow;
           quantity: number;
+          listUnitPrice: number;
           unitPrice: number;
+          listLineTotal: number;
+          discountAmount: number;
           lineTotal: number;
         }> = [];
 
         let subtotal = 0;
+        let discountTotal = 0;
         for (const productId of productIds) {
           const product = productsById.get(productId)!;
-          const quantity = aggregated.get(productId)!;
+          const requested = requestedItems.get(productId)!;
+          const quantity = requested.quantity;
 
           if (!product.is_active) {
             throw new AppError(409, `Produk "${product.name}" sudah tidak dijual.`);
@@ -278,30 +314,63 @@ transactionsRouter.post(
             );
           }
 
-          const unitPrice = roundMoney(Number(product.selling_price));
+          const listUnitPrice = roundMoney(Number(product.selling_price));
+          let unitPrice = listUnitPrice;
+
+          if (requested.unitPrice !== null) {
+            if (requested.unitPrice > listUnitPrice) {
+              throw new AppError(
+                400,
+                `Harga nego "${product.name}" tidak boleh melebihi harga normal (${formatRupiah(listUnitPrice)}).`,
+                { code: "PRICE_ABOVE_LIST" },
+              );
+            }
+
+            const costPrice = roundMoney(Number(product.cost_price));
+            if (costPrice > 0 && requested.unitPrice < costPrice) {
+              throw new AppError(
+                400,
+                `Harga nego "${product.name}" di bawah harga modal (${formatRupiah(costPrice)}).`,
+                { code: "PRICE_BELOW_COST" },
+              );
+            }
+
+            unitPrice = requested.unitPrice;
+          }
+
+          const listLineTotal = roundMoney(listUnitPrice * quantity);
           const lineTotal = roundMoney(unitPrice * quantity);
-          if (lineTotal > 999_999_999_999.99) {
+          const discountAmount = roundMoney(listLineTotal - lineTotal);
+          if (listLineTotal > 999_999_999_999.99) {
             throw new AppError(400, "Total item melebihi batas maksimum transaksi.");
           }
-          subtotal = roundMoney(subtotal + lineTotal);
-          saleItems.push({ product, quantity, unitPrice, lineTotal });
+
+          subtotal = roundMoney(subtotal + listLineTotal);
+          discountTotal = roundMoney(discountTotal + discountAmount);
+          saleItems.push({
+            product,
+            quantity,
+            listUnitPrice,
+            unitPrice,
+            listLineTotal,
+            discountAmount,
+            lineTotal,
+          });
         }
 
-        if (subtotal > 999_999_999_999.99) {
+        const total = roundMoney(subtotal - discountTotal);
+        if (subtotal > 999_999_999_999.99 || total > 999_999_999_999.99) {
           throw new AppError(400, "Total transaksi melebihi batas maksimum.");
         }
-        if (paymentAmount < subtotal) {
+        if (paymentAmount < total) {
           throw new AppError(
             400,
-            `Jumlah pembayaran kurang dari total transaksi (${new Intl.NumberFormat("id-ID", {
-              style: "currency",
-              currency: "IDR",
-              minimumFractionDigits: 0,
-            }).format(subtotal)}).`,
+            `Jumlah pembayaran kurang dari total transaksi (${formatRupiah(total)}).`,
             { code: "INSUFFICIENT_PAYMENT" },
           );
         }
-        const changeDue = roundMoney(paymentAmount - subtotal);
+        const changeDue = roundMoney(paymentAmount - total);
+        const discountReason = discountTotal > 0 ? body.discountReason : null;
 
         const invoiceResult = await client.query<{ seq: string; date: string }>(
           `SELECT nextval('invoice_number_seq')::text AS seq,
@@ -312,14 +381,17 @@ transactionsRouter.post(
 
         const transactionResult = await client.query<{ id: string }>(
           `INSERT INTO transactions
-             (invoice_number, cashier_id, subtotal, total, payment_method,
-              amount_paid, change_due, notes, client_reference, cash_session_id)
-           VALUES ($1, $2, $3, $3, $4, $5, $6, $7, $8, $9)
+             (invoice_number, cashier_id, subtotal, total, discount_total, discount_reason,
+              payment_method, amount_paid, change_due, notes, client_reference, cash_session_id)
+           VALUES ($1, $2, $3, $4, $5, $6, $7, $8, $9, $10, $11, $12)
            RETURNING id`,
           [
             invoiceNumber,
             user.id,
             subtotal.toFixed(2),
+            total.toFixed(2),
+            discountTotal.toFixed(2),
+            discountReason,
             body.paymentMethod,
             paymentAmount.toFixed(2),
             changeDue.toFixed(2),
@@ -341,16 +413,19 @@ transactionsRouter.post(
 
           await client.query(
             `INSERT INTO transaction_items
-               (transaction_id, product_id, product_name, unit, quantity, unit_price, unit_cost, line_total)
-             VALUES ($1, $2, $3, $4, $5, $6, $7, $8)`,
+               (transaction_id, product_id, product_name, unit, quantity, list_unit_price,
+                unit_price, unit_cost, discount_amount, line_total)
+             VALUES ($1, $2, $3, $4, $5, $6, $7, $8, $9, $10)`,
             [
               transactionId,
               item.product.id,
               item.product.name,
               item.product.unit,
               item.quantity.toFixed(3),
+              item.listUnitPrice.toFixed(2),
               item.unitPrice.toFixed(2),
               Number(item.product.cost_price).toFixed(2),
+              item.discountAmount.toFixed(2),
               item.lineTotal.toFixed(2),
             ],
           );

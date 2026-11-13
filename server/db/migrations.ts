@@ -233,4 +233,66 @@ const cashSessionsSchema: Migration = {
   `,
 };
 
-export const migrations: Migration[] = [initialSchema, cashSessionsSchema];
+const priceNegotiationSchema: Migration = {
+  name: "003_price_negotiation",
+  sql: `
+    ALTER TABLE transactions
+      ADD COLUMN discount_total NUMERIC(14, 2) NOT NULL DEFAULT 0,
+      ADD COLUMN discount_reason VARCHAR(300);
+
+    ALTER TABLE transactions
+      ADD CONSTRAINT transactions_discount_total_check CHECK (discount_total >= 0),
+      ADD CONSTRAINT transactions_total_consistency_check CHECK (total = subtotal - discount_total);
+
+    ALTER TABLE transaction_items
+      ADD COLUMN list_unit_price NUMERIC(14, 2),
+      ADD COLUMN discount_amount NUMERIC(14, 2) NOT NULL DEFAULT 0;
+
+    UPDATE transaction_items
+    SET list_unit_price = unit_price
+    WHERE list_unit_price IS NULL;
+
+    ALTER TABLE transaction_items
+      ALTER COLUMN list_unit_price SET NOT NULL,
+      ADD CONSTRAINT transaction_items_list_unit_price_check CHECK (list_unit_price >= 0),
+      ADD CONSTRAINT transaction_items_price_order_check CHECK (unit_price <= list_unit_price),
+      ADD CONSTRAINT transaction_items_discount_amount_check CHECK (discount_amount >= 0);
+
+    CREATE INDEX transactions_discount_idx
+      ON transactions (created_at DESC)
+      WHERE discount_total > 0;
+  `,
+};
+
+const cashExpensesSchema: Migration = {
+  name: "004_cash_expenses",
+  sql: `
+    CREATE TABLE cash_expenses (
+      id UUID PRIMARY KEY DEFAULT gen_random_uuid(),
+      cash_session_id UUID NOT NULL REFERENCES cash_sessions(id) ON DELETE RESTRICT,
+      amount NUMERIC(14, 2) NOT NULL,
+      category VARCHAR(30) NOT NULL,
+      description VARCHAR(300) NOT NULL,
+      created_by UUID NOT NULL REFERENCES users(id) ON DELETE RESTRICT,
+      client_reference UUID NOT NULL UNIQUE,
+      created_at TIMESTAMPTZ NOT NULL DEFAULT NOW(),
+      CONSTRAINT cash_expenses_amount_check CHECK (amount > 0),
+      CONSTRAINT cash_expenses_category_check
+        CHECK (category IN ('supplies', 'equipment', 'transport', 'other')),
+      CONSTRAINT cash_expenses_description_check
+        CHECK (char_length(btrim(description)) BETWEEN 3 AND 300)
+    );
+
+    CREATE INDEX cash_expenses_session_created_idx
+      ON cash_expenses (cash_session_id, created_at DESC);
+    CREATE INDEX cash_expenses_created_at_idx
+      ON cash_expenses (created_at DESC);
+  `,
+};
+
+export const migrations: Migration[] = [
+  initialSchema,
+  cashSessionsSchema,
+  priceNegotiationSchema,
+  cashExpensesSchema,
+];

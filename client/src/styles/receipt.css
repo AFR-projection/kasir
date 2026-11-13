@@ -104,6 +104,20 @@
   white-space: nowrap;
 }
 
+.receipt__item-discount {
+  display: flex;
+  justify-content: space-between;
+  gap: 10px;
+  margin-top: 1px;
+  color: #7c621e;
+  font-size: 8.5px;
+  line-height: 1.4;
+}
+
+.receipt__item-discount span:last-child {
+  white-space: nowrap;
+}
+
 .receipt__totals {
   display: flex;
   flex-direction: column;
@@ -119,6 +133,16 @@
 
 .receipt__totals > div > span:first-child {
   color: #555;
+}
+
+.receipt__discount-row,
+.receipt__discount-row > span:first-child {
+  color: #7c621e !important;
+  font-weight: 600;
+}
+
+.receipt__discount-row {
+  padding-bottom: 2px;
 }
 
 .receipt__total-row {
@@ -148,6 +172,10 @@
   font-size: 9.5px;
   line-height: 1.5;
   overflow-wrap: anywhere;
+}
+
+.receipt__notes + .receipt__notes {
+  margin-top: 2px;
 }
 
 .receipt__footer {

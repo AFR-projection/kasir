@@ -84,6 +84,7 @@ export const transactionInputSchema = z.object({
       z.object({
         productId: uuidSchema,
         quantity: positiveQuantitySchema,
+        unitPrice: moneySchema.optional(),
       }),
     )
     .min(1, "Keranjang tidak boleh kosong.")
@@ -93,6 +94,7 @@ export const transactionInputSchema = z.object({
   }),
   amountPaid: moneySchema,
   notes: optionalTrimmedString(500, "Catatan"),
+  discountReason: optionalTrimmedString(300, "Alasan nego/diskon"),
   clientReference: z.string().uuid("Referensi transaksi tidak valid."),
 });
 

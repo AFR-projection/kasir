@@ -52,6 +52,12 @@ export function Receipt({ transaction }: { transaction: TransactionDetail }) {
               </span>
               <strong>{formatMoney(item.lineTotal)}</strong>
             </div>
+            {item.discountAmount > 0 && (
+              <div className="receipt__item-discount">
+                <span>Harga normal {formatMoney(item.listUnitPrice)}</span>
+                <span>−{formatMoney(item.discountAmount)}</span>
+              </div>
+            )}
           </div>
         ))}
       </div>
@@ -63,6 +69,12 @@ export function Receipt({ transaction }: { transaction: TransactionDetail }) {
           <span>Subtotal</span>
           <span>{formatMoney(transaction.subtotal)}</span>
         </div>
+        {transaction.discountTotal > 0 && (
+          <div className="receipt__discount-row">
+            <span>Diskon nego</span>
+            <span>−{formatMoney(transaction.discountTotal)}</span>
+          </div>
+        )}
         <div className="receipt__total-row">
           <span>TOTAL</span>
           <strong>{formatMoney(transaction.total)}</strong>
@@ -76,6 +88,10 @@ export function Receipt({ transaction }: { transaction: TransactionDetail }) {
           <span>{formatMoney(transaction.changeDue)}</span>
         </div>
       </div>
+
+      {transaction.discountReason && transaction.discountTotal > 0 && (
+        <p className="receipt__notes">Catatan nego: {transaction.discountReason}</p>
+      )}
 
       {transaction.notes && (
         <>

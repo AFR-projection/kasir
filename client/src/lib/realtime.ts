@@ -29,6 +29,7 @@ const eventInvalidationMap: Record<string, string[][]> = {
     ["cash-session"],
   ],
   "cash-session.changed": [["cash-session"], ["transactions"], ["dashboard"]],
+  "cash-expense.changed": [["expenses"], ["cash-session"], ["dashboard"], ["transactions"]],
   "user.changed": [["users"]],
   "settings.updated": [["settings"], ["auth", "me"]],
 };

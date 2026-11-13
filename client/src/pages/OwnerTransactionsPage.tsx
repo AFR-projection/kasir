@@ -254,7 +254,14 @@ export function OwnerTransactionsPage() {
                           {formatPaymentMethod(transaction.paymentMethod)}
                         </Badge>
                       </td>
-                      <td className="text-right strong-cell nowrap">{formatMoney(transaction.total)}</td>
+                      <td className="text-right strong-cell nowrap">
+                        {formatMoney(transaction.total)}
+                        {transaction.discountTotal > 0 && (
+                          <span className="transaction-discount-note">
+                            Nego −{formatMoney(transaction.discountTotal)}
+                          </span>
+                        )}
+                      </td>
                       <td className="text-right">
                         <Button
                           size="sm"

@@ -1985,3 +1985,763 @@
     font-size: 22px;
   }
 }
+
+/* Price negotiation (cart + modal) */
+.cart-line__price {
+  display: inline-flex;
+  flex-wrap: wrap;
+  align-items: center;
+  gap: 4px;
+  margin-top: 1px;
+  padding: 0;
+  border: 0;
+  color: var(--muted-light);
+  background: transparent;
+  font-size: 9.5px;
+  text-align: left;
+  transition: color 0.16s ease;
+}
+
+.cart-line__price:hover {
+  color: var(--brand);
+}
+
+.cart-line__price s {
+  color: var(--muted-light);
+  font-size: 8.5px;
+}
+
+.cart-line__price strong {
+  display: inline;
+  overflow: visible;
+  margin-top: 0;
+  color: var(--brand);
+  font-size: 10.5px;
+  font-weight: 800;
+  line-height: 1.2;
+  -webkit-line-clamp: unset;
+}
+
+.cart-line__nego {
+  display: inline-flex;
+  align-items: center;
+  gap: 2px;
+  margin-top: 0 !important;
+  padding: 1px 5px;
+  border-radius: 999px;
+  color: var(--brand) !important;
+  background: var(--brand-soft);
+  font-size: 8px !important;
+  font-weight: 700;
+}
+
+.cart-line__savings {
+  margin-top: 2px;
+  color: var(--amber);
+  font-size: 8.5px;
+  font-weight: 700;
+}
+
+.cart-line__amount {
+  display: flex;
+  flex-direction: column;
+  align-items: flex-end;
+  gap: 1px;
+}
+
+.cart-line__amount s {
+  color: var(--muted-light);
+  font-size: 9px;
+}
+
+.cart-summary-row--discount span:last-child {
+  color: var(--amber) !important;
+  font-weight: 700;
+}
+
+.cart-summary-total__value {
+  display: flex;
+  flex-direction: column;
+  align-items: flex-end;
+  gap: 2px;
+}
+
+.cart-summary-total__value small {
+  color: var(--amber);
+  font-size: 8.5px;
+  font-weight: 700;
+}
+
+.price-negotiation__product {
+  display: flex;
+  align-items: center;
+  gap: 10px;
+  padding: 10px;
+  border: 1px solid var(--line);
+  border-radius: 10px;
+  background: var(--surface-warm);
+}
+
+.price-negotiation__product > div {
+  display: flex;
+  min-width: 0;
+  flex-direction: column;
+  gap: 2px;
+}
+
+.price-negotiation__product strong {
+  font-size: 12px;
+  font-weight: 700;
+}
+
+.price-negotiation__product span {
+  color: var(--muted);
+  font-size: 9.5px;
+}
+
+.price-negotiation__product b {
+  color: var(--brand);
+}
+
+.price-negotiation__quick {
+  display: grid;
+  grid-template-columns: repeat(4, minmax(0, 1fr));
+  gap: 6px;
+}
+
+.price-negotiation__quick-btn {
+  display: flex;
+  min-height: 44px;
+  flex-direction: column;
+  align-items: center;
+  justify-content: center;
+  gap: 1px;
+  border: 1px solid var(--line);
+  border-radius: 9px;
+  color: var(--muted);
+  background: var(--surface-warm);
+  transition:
+    color 0.16s ease,
+    border-color 0.16s ease,
+    background-color 0.16s ease;
+}
+
+.price-negotiation__quick-btn strong {
+  color: var(--brand);
+  font-size: 10.5px;
+  font-weight: 800;
+}
+
+.price-negotiation__quick-btn span {
+  font-size: 8.5px;
+}
+
+.price-negotiation__quick-btn:hover:not(:disabled),
+.price-negotiation__quick-btn--active {
+  color: var(--brand);
+  border-color: var(--brand);
+  background: var(--brand-soft);
+}
+
+.price-negotiation__quick-btn:disabled {
+  cursor: not-allowed;
+  opacity: 0.4;
+}
+
+.price-negotiation__preview {
+  display: grid;
+  grid-template-columns: repeat(3, minmax(0, 1fr));
+  gap: 8px;
+  padding: 10px 12px;
+  border: 1px solid #d5e8dc;
+  border-radius: 10px;
+  background: var(--brand-soft);
+}
+
+.price-negotiation__preview > div {
+  display: flex;
+  min-width: 0;
+  flex-direction: column;
+  gap: 1px;
+}
+
+.price-negotiation__preview span {
+  color: var(--muted);
+  font-size: 9px;
+  font-weight: 600;
+}
+
+.price-negotiation__preview strong {
+  color: var(--ink-soft);
+  font-size: 12px;
+  font-weight: 800;
+  overflow-wrap: anywhere;
+}
+
+.price-negotiation__preview-saving strong {
+  color: var(--amber);
+}
+
+.price-negotiation__preview-saving small {
+  font-size: 8.5px;
+  font-weight: 700;
+}
+
+.price-negotiation__line-total {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  gap: 10px;
+  padding: 11px 13px;
+  border: 1px dashed var(--line-strong);
+  border-radius: 10px;
+  background: #fefefc;
+}
+
+.price-negotiation__line-total span {
+  color: var(--muted);
+  font-size: 9.5px;
+}
+
+.price-negotiation__line-total strong {
+  color: var(--brand);
+  font-size: 16px;
+  font-weight: 800;
+  white-space: nowrap;
+}
+
+.price-negotiation__reset {
+  display: inline-flex;
+  align-items: center;
+  align-self: flex-start;
+  gap: 5px;
+  color: var(--muted);
+  font-size: 9.5px;
+  font-weight: 600;
+}
+
+.price-negotiation__reset:hover {
+  color: var(--red);
+}
+
+/* Payment negotiation breakdown */
+.payment-negotiation-card {
+  overflow: hidden;
+  border: 1px solid #eadbb2;
+  border-radius: 11px;
+  background: #fdf8ea;
+}
+
+.payment-negotiation-card__head {
+  display: flex;
+  align-items: center;
+  gap: 7px;
+  padding: 9px 12px;
+  border-bottom: 1px solid #f0e3c4;
+  color: #7c621e;
+}
+
+.payment-negotiation-card__head strong {
+  font-size: 10.5px;
+  font-weight: 800;
+}
+
+.payment-negotiation-card__head span {
+  margin-left: auto;
+  font-size: 9px;
+  font-weight: 600;
+}
+
+.payment-negotiation-list {
+  display: flex;
+  flex-direction: column;
+}
+
+.payment-negotiation-item {
+  display: flex;
+  align-items: center;
+  gap: 8px;
+  padding: 7px 12px;
+  border-bottom: 1px dashed #f0e3c4;
+  font-size: 9.5px;
+}
+
+.payment-negotiation-item:last-child {
+  border-bottom: 0;
+}
+
+.payment-negotiation-item > div:first-child {
+  display: flex;
+  min-width: 0;
+  flex: 1;
+  flex-direction: column;
+  gap: 1px;
+}
+
+.payment-negotiation-item > div:first-child strong {
+  overflow: hidden;
+  color: #5d4a17;
+  font-size: 10px;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+}
+
+.payment-negotiation-item > div:first-child span {
+  color: #8b7b4d;
+  font-size: 8.5px;
+}
+
+.payment-negotiation-item__price {
+  display: flex;
+  flex-wrap: wrap;
+  align-items: baseline;
+  gap: 3px;
+  color: #8b7b4d;
+  white-space: nowrap;
+}
+
+.payment-negotiation-item__price s {
+  font-size: 8.5px;
+}
+
+.payment-negotiation-item__price strong {
+  color: var(--brand);
+  font-size: 10px;
+  font-weight: 800;
+}
+
+.payment-negotiation-item__price span {
+  font-size: 8.5px;
+}
+
+.payment-negotiation-item__saving {
+  min-width: 62px;
+  color: var(--amber);
+  font-size: 9px;
+  font-weight: 800;
+  text-align: right;
+  white-space: nowrap;
+}
+
+.payment-negotiation-card__total {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  gap: 10px;
+  padding: 8px 12px;
+  border-top: 1px solid #f0e3c4;
+  color: #7c621e;
+  font-size: 10px;
+  font-weight: 700;
+}
+
+.payment-negotiation-card__total strong {
+  color: var(--amber);
+  font-size: 11px;
+  font-weight: 800;
+}
+
+/* Cash expenses */
+.expense-summary {
+  display: grid;
+  grid-template-columns: repeat(3, minmax(0, 1fr));
+  gap: 8px;
+}
+
+.expense-summary__card {
+  display: flex;
+  align-items: center;
+  gap: 8px;
+  padding: 10px;
+  border: 1px solid var(--line);
+  border-radius: 10px;
+  background: var(--surface-warm);
+}
+
+.expense-summary__icon {
+  display: grid;
+  width: 30px;
+  height: 30px;
+  flex: 0 0 auto;
+  place-items: center;
+  border-radius: 8px;
+  color: var(--blue);
+  background: var(--blue-soft);
+}
+
+.expense-summary__card > div {
+  display: flex;
+  min-width: 0;
+  flex-direction: column;
+  gap: 1px;
+}
+
+.expense-summary__card span {
+  color: var(--muted);
+  font-size: 9px;
+  font-weight: 600;
+}
+
+.expense-summary__card strong {
+  color: var(--ink-soft);
+  font-size: 12px;
+  font-weight: 800;
+  overflow-wrap: anywhere;
+}
+
+.expense-summary__card--expense .expense-summary__icon {
+  color: var(--amber);
+  background: var(--amber-soft);
+}
+
+.expense-summary__card--expense strong {
+  color: var(--amber);
+}
+
+.expense-summary__card--expected .expense-summary__icon {
+  color: var(--brand);
+  background: var(--brand-soft);
+}
+
+.expense-summary__card--expected strong {
+  color: var(--brand);
+}
+
+.expense-formula {
+  display: flex;
+  align-items: flex-start;
+  gap: 7px;
+  padding: 9px 11px;
+  border: 1px dashed #cfe4d7;
+  border-radius: 9px;
+  color: var(--brand);
+  background: var(--brand-soft);
+}
+
+.expense-formula svg {
+  flex: 0 0 auto;
+  margin-top: 1px;
+}
+
+.expense-formula p {
+  font-size: 9.5px;
+  line-height: 1.55;
+}
+
+.expense-formula strong {
+  color: var(--brand-deep);
+}
+
+.expense-form {
+  display: flex;
+  flex-direction: column;
+  gap: 11px;
+  padding: 13px;
+  border: 1px solid var(--line);
+  border-radius: 12px;
+  background: var(--surface);
+}
+
+.expense-form__head {
+  display: flex;
+  align-items: center;
+  gap: 9px;
+}
+
+.expense-form__icon {
+  display: grid;
+  width: 32px;
+  height: 32px;
+  flex: 0 0 auto;
+  place-items: center;
+  border-radius: 9px;
+  color: var(--brand);
+  background: var(--brand-soft);
+}
+
+.expense-form__head > div {
+  display: flex;
+  flex-direction: column;
+  gap: 1px;
+}
+
+.expense-form__head strong {
+  font-size: 11.5px;
+  font-weight: 800;
+}
+
+.expense-form__head p {
+  color: var(--muted);
+  font-size: 9.5px;
+}
+
+.expense-form__grid {
+  display: grid;
+  grid-template-columns: minmax(0, 1fr) minmax(0, 1fr);
+  gap: 10px;
+}
+
+.expense-quick-amounts {
+  display: flex;
+  flex-wrap: wrap;
+  gap: 6px;
+}
+
+.expense-quick-amount {
+  min-height: 28px;
+  border: 1px solid var(--line);
+  border-radius: 999px;
+  padding: 0 10px;
+  color: var(--muted);
+  background: var(--surface-warm);
+  font-size: 9.5px;
+  font-weight: 700;
+  transition:
+    color 0.16s ease,
+    border-color 0.16s ease,
+    background-color 0.16s ease;
+}
+
+.expense-quick-amount:hover,
+.expense-quick-amount--active {
+  color: var(--brand);
+  border-color: var(--brand);
+  background: var(--brand-soft);
+}
+
+.expense-list {
+  display: flex;
+  flex-direction: column;
+  gap: 9px;
+}
+
+.expense-list__head {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  gap: 10px;
+}
+
+.expense-list__head > div {
+  display: flex;
+  flex-direction: column;
+  gap: 1px;
+}
+
+.expense-list__head strong {
+  font-size: 11.5px;
+  font-weight: 800;
+}
+
+.expense-list__head span {
+  color: var(--muted);
+  font-size: 9.5px;
+}
+
+.expense-items {
+  display: flex;
+  flex-direction: column;
+  gap: 6px;
+  margin: 0;
+  padding: 0;
+  list-style: none;
+}
+
+.expense-item {
+  display: flex;
+  align-items: center;
+  gap: 9px;
+  padding: 9px 11px;
+  border: 1px solid var(--line);
+  border-radius: 10px;
+  background: var(--surface-warm);
+}
+
+.expense-item__icon {
+  display: grid;
+  width: 30px;
+  height: 30px;
+  flex: 0 0 auto;
+  place-items: center;
+  border-radius: 8px;
+  color: var(--blue);
+  background: var(--blue-soft);
+}
+
+.expense-item__body {
+  display: flex;
+  min-width: 0;
+  flex: 1;
+  flex-direction: column;
+  gap: 2px;
+}
+
+.expense-item__title {
+  display: flex;
+  flex-wrap: wrap;
+  align-items: center;
+  gap: 5px;
+}
+
+.expense-item__title strong {
+  font-size: 10.5px;
+  font-weight: 700;
+  overflow-wrap: anywhere;
+}
+
+.expense-item__meta {
+  color: var(--muted-light);
+  font-size: 8.5px;
+}
+
+.expense-item__amount {
+  display: flex;
+  flex: 0 0 auto;
+  align-items: center;
+  gap: 7px;
+}
+
+.expense-item__amount > strong {
+  color: var(--red);
+  font-size: 11px;
+  font-weight: 800;
+  white-space: nowrap;
+}
+
+.expense-item__delete {
+  display: grid;
+  width: 25px;
+  height: 25px;
+  place-items: center;
+  border-radius: 6px;
+  color: var(--muted-light);
+  transition:
+    color 0.16s ease,
+    background-color 0.16s ease;
+}
+
+.expense-item__delete:hover {
+  color: var(--red);
+  background: var(--red-soft);
+}
+
+.expense-item__locked {
+  display: inline-flex;
+  align-items: center;
+  gap: 3px;
+  color: var(--muted-light);
+  font-size: 8px;
+  white-space: nowrap;
+}
+
+/* Expense awareness in cash session */
+.cash-session-bar__expenses strong {
+  color: var(--amber);
+}
+
+.cash-session-bar__actions {
+  display: flex;
+  flex: 0 0 auto;
+  flex-wrap: wrap;
+  align-items: center;
+  gap: 7px;
+}
+
+.cash-close-summary {
+  grid-template-columns: repeat(auto-fit, minmax(92px, 1fr));
+}
+
+.cash-close-summary__expense strong {
+  color: var(--amber);
+}
+
+.cash-expense-note {
+  display: flex;
+  align-items: flex-start;
+  gap: 8px;
+  padding: 10px 12px;
+  border: 1px solid #eadbb2;
+  border-radius: 9px;
+  color: #7c621e;
+  background: #fdf8ea;
+}
+
+.cash-expense-note svg {
+  flex: 0 0 auto;
+}
+
+.cash-expense-note p {
+  font-size: 10px;
+  line-height: 1.55;
+}
+
+.session-expense-value {
+  color: var(--amber);
+  font-weight: 700;
+}
+
+.transaction-discount-note {
+  display: block;
+  margin-top: 2px;
+  color: var(--amber);
+  font-size: 9px;
+  font-weight: 600;
+}
+
+.cashier-transaction-card__discount {
+  color: var(--amber) !important;
+  font-size: 8.5px !important;
+  font-weight: 700;
+  white-space: nowrap;
+}
+
+@media (max-width: 680px) {
+  .cash-session-bar__metrics {
+    grid-template-columns: repeat(2, minmax(0, 1fr));
+  }
+
+  .cash-session-bar__expected {
+    padding-left: 0;
+    border-left: 0;
+  }
+
+  .cash-session-bar__actions {
+    width: 100%;
+  }
+
+  .cash-session-bar__actions .btn {
+    flex: 1;
+    justify-content: center;
+  }
+
+  .expense-summary {
+    grid-template-columns: minmax(0, 1fr);
+  }
+
+  .expense-form__grid {
+    grid-template-columns: minmax(0, 1fr);
+  }
+
+  .expense-item {
+    align-items: flex-start;
+  }
+
+  .expense-item__amount {
+    flex-direction: column;
+    align-items: flex-end;
+    gap: 3px;
+  }
+
+  .price-negotiation__preview {
+    grid-template-columns: minmax(0, 1fr);
+  }
+
+  .payment-negotiation-item {
+    flex-wrap: wrap;
+  }
+
+  .payment-negotiation-item__saving {
+    min-width: 0;
+    margin-left: auto;
+  }
+}

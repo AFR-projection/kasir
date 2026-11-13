@@ -102,7 +102,7 @@ dashboardRouter.get(
         ),
         pool.query<TransactionSummaryRow>(
           `SELECT t.id, t.invoice_number, t.cashier_id, u.name AS cashier_name,
-                  t.total, t.payment_method, t.created_at,
+                  t.total, t.discount_total, t.payment_method, t.created_at,
                   (SELECT COUNT(*)::int FROM transaction_items ti WHERE ti.transaction_id = t.id) AS item_count
            FROM transactions t
            JOIN users u ON u.id = t.cashier_id

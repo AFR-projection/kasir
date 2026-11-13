@@ -151,6 +151,7 @@ export interface TransactionSummary {
   cashierId: string;
   cashierName: string;
   total: number;
+  discountTotal: number;
   paymentMethod: PaymentMethod;
   itemCount: number;
   createdAt: string;
@@ -162,7 +163,10 @@ export interface TransactionItem {
   productName: string;
   unit: string;
   quantity: number;
+  listUnitPrice: number;
   unitPrice: number;
+  listLineTotal: number;
+  discountAmount: number;
   lineTotal: number;
 }
 
@@ -171,6 +175,7 @@ export interface TransactionDetail extends TransactionSummary {
   amountPaid: number;
   changeDue: number;
   notes: string | null;
+  discountReason: string | null;
   items: TransactionItem[];
   store: Store;
 }
@@ -187,10 +192,11 @@ export interface TransactionListResponse {
 }
 
 export interface CheckoutInput {
-  items: Array<{ productId: string; quantity: number }>;
+  items: Array<{ productId: string; quantity: number; unitPrice?: number }>;
   paymentMethod: PaymentMethod;
   amountPaid: number;
   notes?: string;
+  discountReason?: string;
   clientReference: string;
 }
 
@@ -265,11 +271,47 @@ export interface CashSession {
   totalSales: number;
   cashSales: number;
   nonCashSales: number;
+  totalExpenses: number;
 }
 
 export interface CashSessionCurrentResponse {
   session: CashSession | null;
   lastClosed: CashSession | null;
+}
+
+export type ExpenseCategory = "supplies" | "equipment" | "transport" | "other";
+
+export interface CashExpense {
+  id: string;
+  cashSessionId: string;
+  amount: number;
+  category: ExpenseCategory;
+  description: string;
+  createdBy: { id: string; name: string };
+  createdAt: string;
+}
+
+export interface CashExpenseListResponse {
+  items: CashExpense[];
+  total: number;
+  page: number;
+  limit: number;
+  summary: {
+    totalAmount: number;
+  };
+}
+
+export interface CreateCashExpenseInput {
+  amount: number;
+  category: ExpenseCategory;
+  description: string;
+  clientReference: string;
+}
+
+export interface CashExpenseQuery {
+  sessionId?: string;
+  page?: number;
+  limit?: number;
 }
 
 export interface CashSessionListResponse {

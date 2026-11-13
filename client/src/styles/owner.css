@@ -2025,7 +2025,7 @@
 }
 
 .cash-session-table {
-  min-width: 1080px;
+  min-width: 980px;
 }
 
 .session-cell {
@@ -2067,6 +2067,28 @@
   font-size: 9.5px;
   line-height: 1.45;
   white-space: nowrap;
+}
+
+.session-cell span.session-cell__people {
+  color: var(--muted-light);
+  font-size: 8.5px;
+}
+
+.session-cell__detail {
+  display: inline-flex;
+  align-self: flex-start;
+  align-items: center;
+  gap: 3px;
+  margin-top: 2px;
+  color: var(--brand);
+  font-size: 8.5px;
+  font-weight: 700;
+}
+
+.session-cell__detail:hover {
+  color: var(--brand-dark);
+  text-decoration: underline;
+  text-underline-offset: 2px;
 }
 
 .session-notes {
@@ -2127,5 +2149,89 @@
     padding: 10px 0 0;
     border-top: 1px dashed #cfe4d7;
     border-left: 0;
+  }
+}
+
+/* Cash session expense detail */
+.session-detail-summary {
+  display: grid;
+  grid-template-columns: repeat(3, minmax(0, 1fr));
+  gap: 8px;
+}
+
+.session-detail-summary > div {
+  display: flex;
+  min-height: 60px;
+  flex-direction: column;
+  justify-content: center;
+  gap: 2px;
+  padding: 9px 11px;
+  border: 1px solid var(--line);
+  border-radius: 10px;
+  background: var(--surface-warm);
+}
+
+.session-detail-summary span {
+  color: var(--muted);
+  font-size: 9px;
+  font-weight: 600;
+}
+
+.session-detail-summary strong {
+  color: var(--ink-soft);
+  font-size: 12px;
+  font-weight: 800;
+  overflow-wrap: anywhere;
+}
+
+.session-detail-summary__expense strong {
+  color: var(--amber);
+}
+
+.session-expense-head {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  gap: 10px;
+}
+
+.session-expense-head > div {
+  display: flex;
+  flex-direction: column;
+  gap: 1px;
+}
+
+.session-expense-head strong {
+  font-size: 11.5px;
+  font-weight: 800;
+}
+
+.session-expense-head span {
+  color: var(--muted);
+  font-size: 9.5px;
+}
+
+.session-detail-notes {
+  padding: 10px 12px;
+  border: 1px solid var(--line);
+  border-radius: 9px;
+  background: var(--surface-warm);
+}
+
+.session-detail-notes strong {
+  font-size: 10.5px;
+  font-weight: 800;
+}
+
+.session-detail-notes p {
+  margin-top: 3px;
+  color: var(--muted);
+  font-size: 10px;
+  line-height: 1.55;
+}
+
+@media (max-width: 680px) {
+  .session-detail-summary {
+    grid-template-columns: repeat(2, minmax(0, 1fr));
   }
 }

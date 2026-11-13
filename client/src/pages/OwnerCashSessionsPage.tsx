@@ -5,20 +5,25 @@ import {
   CalendarClock,
   CircleAlert,
   ClipboardCheck,
+  Eye,
   LockKeyhole,
+  Package,
   Wallet,
 } from "lucide-react";
 import { api } from "../lib/api";
 import type { CashSession } from "../types";
 import {
   formatDateTime,
+  formatExpenseCategory,
   formatMoney,
   formatTime,
   getErrorMessage,
 } from "../lib/utils";
 import {
   Badge,
+  Button,
   EmptyState,
+  Modal,
   PageError,
   PageHeader,
   PageLoader,
@@ -58,6 +63,10 @@ function ActiveSessionBanner({ session }: { session: CashSession }) {
         <strong>{formatMoney(session.cashSales)}</strong>
       </div>
       <div className="session-live-banner__metric">
+        <span>Pengeluaran</span>
+        <strong>−{formatMoney(session.totalExpenses)}</strong>
+      </div>
+      <div className="session-live-banner__metric">
         <span>Estimasi uang laci</span>
         <strong>{formatMoney(session.expectedCash)}</strong>
       </div>
@@ -65,8 +74,124 @@ function ActiveSessionBanner({ session }: { session: CashSession }) {
   );
 }
 
+function SessionExpenseModal({
+  session,
+  onClose,
+}: {
+  session: CashSession;
+  onClose: () => void;
+}) {
+  const expensesQuery = useQuery({
+    queryKey: ["expenses", { sessionId: session.id }],
+    queryFn: () => api.expenses.list({ sessionId: session.id, page: 1, limit: 100 }),
+  });
+
+  const expenses = expensesQuery.data?.items ?? [];
+  const totalExpenses = expensesQuery.data?.summary.totalAmount ?? session.totalExpenses;
+
+  return (
+    <Modal
+      open
+      onClose={onClose}
+      title="Detail Sesi Kas"
+      subtitle={`${formatDateTime(session.openedAt)} · ${session.openedBy.name}`}
+      size="lg"
+      footer={
+        <Button variant="secondary" onClick={onClose}>
+          Tutup
+        </Button>
+      }
+    >
+      <div className="session-detail-summary">
+        <div>
+          <span>Kas awal</span>
+          <strong>{formatMoney(session.openingCash)}</strong>
+        </div>
+        <div>
+          <span>Penjualan tunai</span>
+          <strong>{formatMoney(session.cashSales)}</strong>
+        </div>
+        <div className="session-detail-summary__expense">
+          <span>Pengeluaran kas</span>
+          <strong>−{formatMoney(totalExpenses)}</strong>
+        </div>
+        <div>
+          <span>Uang laci seharusnya</span>
+          <strong>{formatMoney(session.expectedCash)}</strong>
+        </div>
+        <div>
+          <span>Uang dihitung</span>
+          <strong>{session.countedCash === null ? "—" : formatMoney(session.countedCash)}</strong>
+        </div>
+        <div>
+          <span>Selisih</span>
+          <Badge tone={differenceTone(session.difference)}>
+            {session.difference === null ? "Berjalan" : signedMoney(session.difference)}
+          </Badge>
+        </div>
+      </div>
+
+      <div className="session-expense-head">
+        <div>
+          <strong>Pengeluaran pada sesi ini</strong>
+          <span>{expenses.length > 0 ? `${expenses.length} catatan` : "Tidak ada pengeluaran"}</span>
+        </div>
+        <Badge tone={totalExpenses > 0 ? "amber" : "gray"}>
+          Total {formatMoney(totalExpenses)}
+        </Badge>
+      </div>
+
+      {expensesQuery.isLoading ? (
+        <PageLoader label="Memuat pengeluaran..." />
+      ) : expensesQuery.isError ? (
+        <PageError
+          message={getErrorMessage(expensesQuery.error)}
+          onRetry={() => void expensesQuery.refetch()}
+        />
+      ) : expenses.length === 0 ? (
+        <EmptyState
+          compact
+          icon={<Package size={22} />}
+          title="Tidak ada pengeluaran"
+          description="Kasir tidak mencatat pengeluaran kas pada sesi ini."
+        />
+      ) : (
+        <ul className="expense-items">
+          {expenses.map((expense) => (
+            <li className="expense-item" key={expense.id}>
+              <span className="expense-item__icon">
+                <Wallet size={16} />
+              </span>
+              <div className="expense-item__body">
+                <div className="expense-item__title">
+                  <strong>{expense.description}</strong>
+                  <Badge tone="blue">{formatExpenseCategory(expense.category)}</Badge>
+                </div>
+                <span className="expense-item__meta">
+                  {formatDateTime(expense.createdAt)} · {expense.createdBy.name}
+                </span>
+              </div>
+              <div className="expense-item__amount">
+                <strong>−{formatMoney(expense.amount)}</strong>
+              </div>
+            </li>
+          ))}
+        </ul>
+      )}
+
+      {session.closingNotes && (
+        <div className="session-detail-notes">
+          <strong>Catatan penutupan</strong>
+          <p>{session.closingNotes}</p>
+        </div>
+      )}
+    </Modal>
+  );
+}
+
 export function OwnerCashSessionsPage() {
   const [page, setPage] = useState(1);
+  const [selectedSession, setSelectedSession] = useState<CashSession | null>(null);
 
   const currentQuery = useQuery({
     queryKey: ["cash-session", "current"],
@@ -143,9 +268,9 @@ export function OwnerCashSessionsPage() {
                 <thead>
                   <tr>
                     <th>Sesi</th>
-                    <th>Kasir</th>
                     <th className="text-right">Kas Awal</th>
                     <th className="text-right">Penjualan Tunai</th>
+                    <th className="text-right">Pengeluaran</th>
                     <th className="text-right">Seharusnya</th>
                     <th className="text-right">Dihitung</th>
                     <th className="text-right">Selisih</th>
@@ -165,17 +290,32 @@ export function OwnerCashSessionsPage() {
                                 ? "Masih berjalan"
                                 : `Ditutup ${formatDateTime(session.closedAt)}`}
                             </span>
+                            <span className="session-cell__people">
+                              Buka: {session.openedBy.name}
+                              {session.closedBy && ` · Tutup: ${session.closedBy.name}`}
+                            </span>
+                            <button
+                              type="button"
+                              className="session-cell__detail"
+                              onClick={() => setSelectedSession(session)}
+                            >
+                              <Eye size={11} />
+                              Lihat detail
+                            </button>
                           </div>
-                        </div>
-                      </td>
-                      <td>
-                        <div className="session-people">
-                          <span>Buka: {session.openedBy.name}</span>
-                          {session.closedBy && <span>Tutup: {session.closedBy.name}</span>}
                         </div>
                       </td>
                       <td className="text-right nowrap">{formatMoney(session.openingCash)}</td>
                       <td className="text-right nowrap">{formatMoney(session.cashSales)}</td>
+                      <td className="text-right nowrap">
+                        {session.totalExpenses > 0 ? (
+                          <span className="session-expense-value">
+                            −{formatMoney(session.totalExpenses)}
+                          </span>
+                        ) : (
+                          <span className="muted-cell">{formatMoney(0)}</span>
+                        )}
+                      </td>
                       <td className="text-right strong-cell nowrap">{formatMoney(session.expectedCash)}</td>
                       <td className="text-right nowrap">
                         {session.countedCash === null ? "—" : formatMoney(session.countedCash)}
@@ -219,11 +359,15 @@ export function OwnerCashSessionsPage() {
         <div>
           <strong>Bagaimana selisih dihitung?</strong>
           <p>
-            Uang laci seharusnya = kas awal + seluruh penjualan tunai. Selisih = uang hasil hitung − uang
-            seharusnya. Penjualan QRIS, debit, dan transfer tidak menambah uang tunai di laci.
+            Uang laci seharusnya = kas awal + seluruh penjualan tunai − pengeluaran kas. Selisih = uang hasil
+            hitung − uang seharusnya. Penjualan QRIS, debit, dan transfer tidak menambah uang tunai di laci.
           </p>
         </div>
       </section>
+
+      {selectedSession && (
+        <SessionExpenseModal session={selectedSession} onClose={() => setSelectedSession(null)} />
+      )}
     </div>
   );
 }

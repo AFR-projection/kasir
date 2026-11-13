@@ -60,6 +60,7 @@ export interface TransactionSummaryDto {
   cashierId: string;
   cashierName: string;
   total: number;
+  discountTotal: number;
   paymentMethod: "cash" | "qris" | "debit" | "transfer";
   itemCount: number;
   createdAt: string;
@@ -71,7 +72,10 @@ export interface TransactionItemDto {
   productName: string;
   unit: string;
   quantity: number;
+  listUnitPrice: number;
   unitPrice: number;
+  listLineTotal: number;
+  discountAmount: number;
   lineTotal: number;
 }
 
@@ -87,6 +91,7 @@ export interface TransactionDetailDto extends TransactionSummaryDto {
   amountPaid: number;
   changeDue: number;
   notes: string | null;
+  discountReason: string | null;
   items: TransactionItemDto[];
   store: StoreDto;
 }
@@ -220,6 +225,7 @@ export interface TransactionSummaryRow {
   cashier_id: string;
   cashier_name: string;
   total: number;
+  discount_total: number;
   payment_method: "cash" | "qris" | "debit" | "transfer";
   item_count: number;
   created_at: Date | string;
@@ -232,6 +238,7 @@ export function mapTransactionSummary(row: TransactionSummaryRow): TransactionSu
     cashierId: row.cashier_id,
     cashierName: row.cashier_name,
     total: Number(row.total),
+    discountTotal: Number(row.discount_total),
     paymentMethod: row.payment_method,
     itemCount: Number(row.item_count),
     createdAt: iso(row.created_at)!,
