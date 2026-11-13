@@ -371,7 +371,7 @@ Tambahkan di **Project → Settings → Environment Variables**:
 | `STORE_TIMEZONE` | `Asia/Jakarta` (atau zona toko). |
 | `RUN_MIGRATIONS_ON_START` | `true` untuk deploy pertama; boleh `false` setelah migrasi stabil. |
 | `REALTIME_MODE` | `auto` atau `polling`. |
-| `BLOB_READ_WRITE_TOKEN` | Token dari Vercel Blob. |
+| `BLOB_READ_WRITE_TOKEN` | Token dari Vercel Blob. Bisa juga `POS_BLOB_READ_WRITE_TOKEN` jika store di-connect dengan prefix `POS_`. |
 
 Jangan mengisi `PORT`; Vercel mengatur port fungsi secara otomatis.
 
@@ -379,7 +379,7 @@ Jangan mengisi `PORT`; Vercel mengatur port fungsi secara otomatis.
 
 1. Buka **Storage → Create Database → Blob**.
 2. Hubungkan Blob store ke project.
-3. Pastikan `BLOB_READ_WRITE_TOKEN` ada di Environment Variables untuk environment **Production** (biasanya ditambahkan otomatis).
+3. Pastikan `BLOB_READ_WRITE_TOKEN` ada di Environment Variables untuk environment **Production** (biasanya ditambahkan otomatis). Jika saat connect kamu memakai prefix `POS_`, nama yang muncul adalah `POS_BLOB_READ_WRITE_TOKEN` — aplikasi membaca keduanya.
 4. **Redeploy** setelah menghubungkan Blob. Environment variable baru tidak terbaca oleh deployment lama.
 
 Di Vercel, browser mengunggah gambar **langsung ke Vercel Blob** melalui token berumur pendek dari `/api/uploads/blob`. Dengan cara ini upload tidak melewati batas body 4,5 MB Vercel Functions dan tidak bergantung pada filesystem server. Server hanya membuat token setelah memastikan user adalah owner.

@@ -17,6 +17,7 @@ const envSchema = z.object({
   REALTIME_MODE: z.enum(["auto", "sse", "polling"]).default("auto"),
   UPLOAD_DIR: z.string().optional(),
   BLOB_READ_WRITE_TOKEN: z.string().optional(),
+  POS_BLOB_READ_WRITE_TOKEN: z.string().optional(),
 });
 
 const parsed = envSchema.safeParse(process.env);
@@ -59,7 +60,8 @@ export const config = {
   runMigrationsOnStart: parsed.data.RUN_MIGRATIONS_ON_START,
   realtimeMode,
   sseEnabled: realtimeMode === "sse",
-  blobReadWriteToken: parsed.data.BLOB_READ_WRITE_TOKEN?.trim() || null,
+  blobReadWriteToken:
+    parsed.data.BLOB_READ_WRITE_TOKEN?.trim() || parsed.data.POS_BLOB_READ_WRITE_TOKEN?.trim() || null,
   uploadDir: path.resolve(process.cwd(), parsed.data.UPLOAD_DIR || "uploads"),
   sessionCookieName: "kasir_session",
   sessionDurationMs: 12 * 60 * 60 * 1000,
