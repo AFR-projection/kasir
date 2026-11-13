@@ -1,0 +1,411 @@
+import { Router } from "express";
+import { z } from "zod";
+import { pool, withTransaction } from "../db/pool";
+import { config } from "../config";
+import { currentUser, requireAuth, requireCashier } from "../lib/auth";
+import { asyncHandler, AppError } from "../lib/http";
+import { emitEvent } from "../lib/realtime";
+import { getStore } from "../lib/store";
+import {
+  mapTransactionSummary,
+  type TransactionSummaryRow,
+  type TransactionDetailDto,
+  type TransactionItemDto,
+  type TransactionSummaryDto,
+} from "../lib/serializers";
+import {
+  dateInputSchema,
+  parseId,
+  roundMoney,
+  roundQuantity,
+  transactionInputSchema,
+  uuidSchema,
+} from "../lib/validation";
+
+export const transactionsRouter = Router();
+transactionsRouter.use(requireAuth);
+
+interface TransactionDetailRow extends TransactionSummaryRow {
+  subtotal: number;
+  amount_paid: number;
+  change_due: number;
+  notes: string | null;
+}
+
+interface TransactionItemRow {
+  id: string;
+  product_id: string;
+  product_name: string;
+  unit: string;
+  quantity: number;
+  unit_price: number;
+  line_total: number;
+}
+
+interface LockedProductRow {
+  id: string;
+  name: string;
+  cost_price: number;
+  selling_price: number;
+  stock: number;
+  unit: string;
+  is_active: boolean;
+}
+
+async function getTransactionDetailById(id: string): Promise<TransactionDetailDto | null> {
+  const result = await pool.query<TransactionDetailRow>(
+    `SELECT t.id, t.invoice_number, t.cashier_id, u.name AS cashier_name,
+            t.subtotal, t.total, t.payment_method, t.amount_paid, t.change_due,
+            t.notes, t.created_at,
+            (SELECT COUNT(*)::int FROM transaction_items ti WHERE ti.transaction_id = t.id) AS item_count
+     FROM transactions t
+     JOIN users u ON u.id = t.cashier_id
+     WHERE t.id = $1`,
+    [id],
+  );
+  const row = result.rows[0];
+  if (!row) return null;
+
+  const itemsResult = await pool.query<TransactionItemRow>(
+    `SELECT id, product_id, product_name, unit, quantity, unit_price, line_total
+     FROM transaction_items
+     WHERE transaction_id = $1
+     ORDER BY created_at ASC, id ASC`,
+    [id],
+  );
+
+  const items: TransactionItemDto[] = itemsResult.rows.map((item) => ({
+    id: item.id,
+    productId: item.product_id,
+    productName: item.product_name,
+    unit: item.unit,
+    quantity: Number(item.quantity),
+    unitPrice: Number(item.unit_price),
+    lineTotal: Number(item.line_total),
+  }));
+
+  const summary = mapTransactionSummary(row);
+  return {
+    ...summary,
+    subtotal: Number(row.subtotal),
+    amountPaid: Number(row.amount_paid),
+    changeDue: Number(row.change_due),
+    notes: row.notes,
+    items,
+    store: await getStore(),
+  };
+}
+
+const listQuerySchema = z.object({
+  search: z.string().trim().max(100).optional(),
+  dateFrom: dateInputSchema.optional(),
+  dateTo: dateInputSchema.optional(),
+  page: z.coerce.number().int().min(1).default(1),
+  limit: z.coerce.number().int().min(1).max(100).default(20),
+});
+
+transactionsRouter.get(
+  "/",
+  asyncHandler(async (req, res) => {
+    const user = currentUser(req);
+    const query = listQuerySchema.parse(req.query);
+    const conditions: string[] = [];
+    const values: unknown[] = [];
+    let timezoneParam: number | null = null;
+
+    const timezoneRef = () => {
+      if (!timezoneParam) {
+        values.push(config.storeTimezone);
+        timezoneParam = values.length;
+      }
+      return `$${timezoneParam}`;
+    };
+
+    if (user.role === "cashier") {
+      values.push(user.id);
+      conditions.push(`t.cashier_id = $${values.length}`);
+    }
+    if (query.search) {
+      values.push(`%${query.search.replace(/[\\%_]/g, "\\$&")}%`);
+      conditions.push(
+        `(t.invoice_number ILIKE $${values.length} ESCAPE '\\' OR u.name ILIKE $${values.length} ESCAPE '\\')`,
+      );
+    }
+    if (query.dateFrom) {
+      const timezone = timezoneRef();
+      values.push(query.dateFrom);
+      conditions.push(`(t.created_at AT TIME ZONE ${timezone})::date >= $${values.length}::date`);
+    }
+    if (query.dateTo) {
+      const timezone = timezoneRef();
+      values.push(query.dateTo);
+      conditions.push(`(t.created_at AT TIME ZONE ${timezone})::date <= $${values.length}::date`);
+    }
+
+    const where = conditions.length ? `WHERE ${conditions.join(" AND ")}` : "";
+    const summaryResult = await pool.query<{ count: number; total_sales: number }>(
+      `SELECT COUNT(*)::int AS count, COALESCE(SUM(t.total), 0)::numeric AS total_sales
+       FROM transactions t
+       JOIN users u ON u.id = t.cashier_id
+       ${where}`,
+      values,
+    );
+
+    const offset = (query.page - 1) * query.limit;
+    const listValues = [...values, query.limit, offset];
+    const result = await pool.query<TransactionSummaryRow>(
+      `SELECT t.id, t.invoice_number, t.cashier_id, u.name AS cashier_name,
+              t.total, t.payment_method, t.created_at,
+              (SELECT COUNT(*)::int FROM transaction_items ti WHERE ti.transaction_id = t.id) AS item_count
+       FROM transactions t
+       JOIN users u ON u.id = t.cashier_id
+       ${where}
+       ORDER BY t.created_at DESC
+       LIMIT $${listValues.length - 1} OFFSET $${listValues.length}`,
+      listValues,
+    );
+
+    res.json({
+      items: result.rows.map(mapTransactionSummary),
+      total: summaryResult.rows[0].count,
+      page: query.page,
+      limit: query.limit,
+      summary: {
+        count: summaryResult.rows[0].count,
+        totalSales: Number(summaryResult.rows[0].total_sales),
+      },
+    });
+  }),
+);
+
+transactionsRouter.get(
+  "/:id",
+  asyncHandler(async (req, res) => {
+    const user = currentUser(req);
+    const id = parseId(req.params.id);
+    const transaction = await getTransactionDetailById(id);
+
+    if (!transaction) throw new AppError(404, "Transaksi tidak ditemukan.");
+    if (user.role === "cashier" && transaction.cashierId !== user.id) {
+      throw new AppError(404, "Transaksi tidak ditemukan.");
+    }
+
+    res.json({ transaction });
+  }),
+);
+
+transactionsRouter.post(
+  "/",
+  requireCashier,
+  asyncHandler(async (req, res) => {
+    const user = currentUser(req);
+    const body = transactionInputSchema.parse(req.body);
+    const paymentAmount = roundMoney(body.amountPaid);
+
+    const aggregated = new Map<string, number>();
+    for (const item of body.items) {
+      aggregated.set(item.productId, roundQuantity((aggregated.get(item.productId) ?? 0) + item.quantity));
+    }
+    const productIds = Array.from(aggregated.keys()).sort();
+    if (productIds.some((id) => (aggregated.get(id) ?? 0) <= 0)) {
+      throw new AppError(400, "Jumlah produk tidak valid.");
+    }
+
+    try {
+      const outcome = await withTransaction(async (client) => {
+        // Serialisasi request dengan referensi yang sama. Ini mencegah double submission
+        // membuat transaksi kedua saat request pertama masih diproses.
+        await client.query("SELECT pg_advisory_xact_lock(hashtextextended($1, 0))", [body.clientReference]);
+
+        const existing = await client.query<{ id: string; cashier_id: string }>(
+          "SELECT id, cashier_id FROM transactions WHERE client_reference = $1",
+          [body.clientReference],
+        );
+        if (existing.rows[0]) {
+          if (existing.rows[0].cashier_id !== user.id) {
+            throw new AppError(409, "Referensi transaksi sudah digunakan.");
+          }
+          return { id: existing.rows[0].id, alreadyProcessed: true as const };
+        }
+
+        // FOR SHARE memungkinkan beberapa checkout berjalan bersamaan, tetapi
+        // akan menunggu proses tutup kas yang memakai FOR UPDATE. Setelah kas
+        // ditutup, checkout baru tidak lagi menemukan sesi berstatus open.
+        const sessionResult = await client.query<{ id: string }>(
+          "SELECT id FROM cash_sessions WHERE status = 'open' FOR SHARE LIMIT 1",
+        );
+        const cashSessionId = sessionResult.rows[0]?.id;
+        if (!cashSessionId) {
+          throw new AppError(409, "Kas belum dibuka. Minta kasir membuka kas terlebih dahulu.", {
+            code: "CASH_SESSION_CLOSED",
+          });
+        }
+
+        const productsResult = await client.query<LockedProductRow>(
+          `SELECT id, name, cost_price, selling_price, stock, unit, is_active
+           FROM products
+           WHERE id = ANY($1::uuid[]) AND deleted_at IS NULL
+           ORDER BY id
+           FOR UPDATE`,
+          [productIds],
+        );
+
+        if (productsResult.rows.length !== productIds.length) {
+          throw new AppError(409, "Beberapa produk tidak tersedia lagi. Muat ulang keranjang Anda.");
+        }
+
+        const productsById = new Map(productsResult.rows.map((product) => [product.id, product]));
+        const saleItems: Array<{
+          product: LockedProductRow;
+          quantity: number;
+          unitPrice: number;
+          lineTotal: number;
+        }> = [];
+
+        let subtotal = 0;
+        for (const productId of productIds) {
+          const product = productsById.get(productId)!;
+          const quantity = aggregated.get(productId)!;
+
+          if (!product.is_active) {
+            throw new AppError(409, `Produk "${product.name}" sudah tidak dijual.`);
+          }
+          if (Number(product.stock) < quantity) {
+            throw new AppError(
+              409,
+              `Stok "${product.name}" tidak mencukupi. Tersedia ${Number(product.stock)} ${product.unit}.`,
+              { code: "INSUFFICIENT_STOCK" },
+            );
+          }
+
+          const unitPrice = roundMoney(Number(product.selling_price));
+          const lineTotal = roundMoney(unitPrice * quantity);
+          if (lineTotal > 999_999_999_999.99) {
+            throw new AppError(400, "Total item melebihi batas maksimum transaksi.");
+          }
+          subtotal = roundMoney(subtotal + lineTotal);
+          saleItems.push({ product, quantity, unitPrice, lineTotal });
+        }
+
+        if (subtotal > 999_999_999_999.99) {
+          throw new AppError(400, "Total transaksi melebihi batas maksimum.");
+        }
+        if (paymentAmount < subtotal) {
+          throw new AppError(
+            400,
+            `Jumlah pembayaran kurang dari total transaksi (${new Intl.NumberFormat("id-ID", {
+              style: "currency",
+              currency: "IDR",
+              minimumFractionDigits: 0,
+            }).format(subtotal)}).`,
+            { code: "INSUFFICIENT_PAYMENT" },
+          );
+        }
+        const changeDue = roundMoney(paymentAmount - subtotal);
+
+        const invoiceResult = await client.query<{ seq: string; date: string }>(
+          `SELECT nextval('invoice_number_seq')::text AS seq,
+                  to_char(NOW() AT TIME ZONE $1, 'YYYYMMDD') AS date`,
+          [config.storeTimezone],
+        );
+        const invoiceNumber = `TRX-${invoiceResult.rows[0].date}-${invoiceResult.rows[0].seq.padStart(5, "0")}`;
+
+        const transactionResult = await client.query<{ id: string }>(
+          `INSERT INTO transactions
+             (invoice_number, cashier_id, subtotal, total, payment_method,
+              amount_paid, change_due, notes, client_reference, cash_session_id)
+           VALUES ($1, $2, $3, $3, $4, $5, $6, $7, $8, $9)
+           RETURNING id`,
+          [
+            invoiceNumber,
+            user.id,
+            subtotal.toFixed(2),
+            body.paymentMethod,
+            paymentAmount.toFixed(2),
+            changeDue.toFixed(2),
+            body.notes,
+            body.clientReference,
+            cashSessionId,
+          ],
+        );
+        const transactionId = transactionResult.rows[0].id;
+
+        for (const item of saleItems) {
+          const previousStock = roundQuantity(Number(item.product.stock));
+          const currentStock = roundQuantity(previousStock - item.quantity);
+
+          await client.query("UPDATE products SET stock = $1 WHERE id = $2", [
+            currentStock.toFixed(3),
+            item.product.id,
+          ]);
+
+          await client.query(
+            `INSERT INTO transaction_items
+               (transaction_id, product_id, product_name, unit, quantity, unit_price, unit_cost, line_total)
+             VALUES ($1, $2, $3, $4, $5, $6, $7, $8)`,
+            [
+              transactionId,
+              item.product.id,
+              item.product.name,
+              item.product.unit,
+              item.quantity.toFixed(3),
+              item.unitPrice.toFixed(2),
+              Number(item.product.cost_price).toFixed(2),
+              item.lineTotal.toFixed(2),
+            ],
+          );
+
+          await client.query(
+            `INSERT INTO stock_movements
+               (product_id, user_id, transaction_id, movement_type, quantity,
+                previous_stock, current_stock, notes)
+             VALUES ($1, $2, $3, 'sale', $4, $5, $6, $7)`,
+            [
+              item.product.id,
+              user.id,
+              transactionId,
+              item.quantity.toFixed(3),
+              previousStock.toFixed(3),
+              currentStock.toFixed(3),
+              `Penjualan ${invoiceNumber}`,
+            ],
+          );
+        }
+
+        return { id: transactionId, alreadyProcessed: false as const };
+      });
+
+      const transaction = await getTransactionDetailById(outcome.id);
+      if (!transaction) throw new AppError(500, "Transaksi tersimpan tetapi gagal dimuat.");
+
+      if (!outcome.alreadyProcessed) {
+        emitEvent("transaction.created", { id: transaction.id });
+        emitEvent("stock.adjusted", { transactionId: transaction.id, source: "sale" });
+      }
+
+      res.status(outcome.alreadyProcessed ? 200 : 201).json({
+        transaction,
+        alreadyProcessed: outcome.alreadyProcessed,
+        message: outcome.alreadyProcessed ? "Transaksi ini sudah diproses sebelumnya." : "Transaksi berhasil.",
+      });
+    } catch (error) {
+      const pgError = error as { code?: string; constraint?: string };
+      if (pgError.code === "23505" && pgError.constraint === "transactions_client_reference_key") {
+        const existing = await pool.query<{ id: string; cashier_id: string }>(
+          "SELECT id, cashier_id FROM transactions WHERE client_reference = $1",
+          [body.clientReference],
+        );
+        if (existing.rows[0]?.cashier_id === user.id) {
+          const transaction = await getTransactionDetailById(existing.rows[0].id);
+          if (transaction) {
+            res.status(200).json({ transaction, alreadyProcessed: true });
+            return;
+          }
+        }
+      }
+      throw error;
+    }
+  }),
+);
+
+export type { TransactionSummaryDto };

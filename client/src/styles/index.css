@@ -1,0 +1,7 @@
+@import "./base.css";
+@import "./components.css";
+@import "./auth.css";
+@import "./owner.css";
+@import "./cashier.css";
+@import "./receipt.css";
+@import "./print.css";

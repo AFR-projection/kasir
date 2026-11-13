@@ -1,0 +1,12 @@
+node_modules/
+kasirku-next/
+dist/
+client/dist/
+server/dist/
+.env
+.env.local
+.env.*.local
+uploads/
+*.log
+.DS_Store
+Thumbs.db
