@@ -4,6 +4,7 @@ import crypto from "node:crypto";
 import { Router } from "express";
 import multer from "multer";
 import { put } from "@vercel/blob";
+import { handleUpload, type HandleUploadBody } from "@vercel/blob/client";
 import { config } from "../config";
 import { requireOwner } from "../lib/auth";
 import { AppError, asyncHandler } from "../lib/http";
@@ -31,8 +32,49 @@ const upload = multer({
   },
 });
 
+const maxUploadBytes = 5 * 1024 * 1024;
+
 export const uploadRouter = Router();
 uploadRouter.use(requireOwner);
+
+uploadRouter.get("/config", (_req, res) => {
+  const mode = config.blobReadWriteToken ? "blob" : config.isVercel ? "unavailable" : "local";
+  res.json({ mode, maxSize: maxUploadBytes });
+});
+
+// Upload langsung dari browser ke Vercel Blob. Ini menghindari batas body
+// 4,5 MB pada Vercel Functions dan tidak memproses multipart di server.
+uploadRouter.post(
+  "/blob",
+  asyncHandler(async (req, res) => {
+    if (!config.blobReadWriteToken) {
+      throw new AppError(
+        503,
+        "Penyimpanan gambar belum dikonfigurasi. Hubungkan Vercel Blob ke project (BLOB_READ_WRITE_TOKEN).",
+        { code: "UPLOAD_STORAGE_UNAVAILABLE" },
+      );
+    }
+
+    const result = await handleUpload({
+      body: req.body as HandleUploadBody,
+      request: req,
+      token: config.blobReadWriteToken,
+      onBeforeGenerateToken: async (pathname) => {
+        if (!/^products\/[a-zA-Z0-9_-]{1,100}\.(jpg|jpeg|png|webp)$/.test(pathname)) {
+          throw new AppError(400, "Nama file gambar tidak valid.", { code: "INVALID_UPLOAD_PATH" });
+        }
+        return {
+          allowedContentTypes: ["image/jpeg", "image/png", "image/webp"],
+          maximumSizeInBytes: maxUploadBytes,
+          addRandomSuffix: false,
+          allowOverwrite: false,
+        };
+      },
+    });
+
+    res.status(200).json(result);
+  }),
+);
 
 uploadRouter.post(
   "/product-image",

@@ -38,7 +38,7 @@ app.use(
         "style-src": ["'self'", "'unsafe-inline'"],
         "img-src": ["'self'", "data:", "blob:", "https:"],
         "font-src": ["'self'", "data:"],
-        "connect-src": ["'self'"],
+        "connect-src": ["'self'", "https://*.blob.vercel-storage.com"],
         "object-src": ["'none'"],
         "base-uri": ["'self'"],
         "form-action": ["'self'"],
@@ -80,6 +80,7 @@ app.get("/api/health", async (_req, res) => {
       status: "ok",
       database: "connected",
       realtime: config.realtimeMode,
+      storage: config.blobReadWriteToken ? "blob" : config.isVercel ? "unconfigured" : "local",
       time: new Date().toISOString(),
     });
   } catch {

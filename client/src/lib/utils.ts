@@ -169,11 +169,14 @@ export function quantityStep(unit: string): number {
 }
 
 export async function compressImage(file: File): Promise<File> {
+  if (file.type === "image/heic" || file.type === "image/heif") {
+    throw new Error("Foto HEIC/HEIF belum didukung. Ubah dulu ke JPG, PNG, atau WEBP.");
+  }
   if (!file.type.startsWith("image/")) {
-    throw new Error("File harus berupa gambar.");
+    throw new Error("File harus berupa gambar JPG, PNG, atau WEBP.");
   }
   if (file.size > 15 * 1024 * 1024) {
-    throw new Error("Ukuran gambar maximal 15 MB.");
+    throw new Error("Ukuran gambar maksimal 15 MB.");
   }
 
   const objectUrl = URL.createObjectURL(file);

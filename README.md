@@ -379,8 +379,15 @@ Jangan mengisi `PORT`; Vercel mengatur port fungsi secara otomatis.
 
 1. Buka **Storage → Create Database → Blob**.
 2. Hubungkan Blob store ke project.
-3. Salin `BLOB_READ_WRITE_TOKEN` ke Environment Variables (biasanya ditambahkan otomatis).
-4. Redeploy.
+3. Pastikan `BLOB_READ_WRITE_TOKEN` ada di Environment Variables untuk environment **Production** (biasanya ditambahkan otomatis).
+4. **Redeploy** setelah menghubungkan Blob. Environment variable baru tidak terbaca oleh deployment lama.
+
+Di Vercel, browser mengunggah gambar **langsung ke Vercel Blob** melalui token berumur pendek dari `/api/uploads/blob`. Dengan cara ini upload tidak melewati batas body 4,5 MB Vercel Functions dan tidak bergantung pada filesystem server. Server hanya membuat token setelah memastikan user adalah owner.
+
+Cek `https://domain-anda.vercel.app/api/health`:
+
+- `"storage": "blob"` — token Blob terbaca.
+- `"storage": "unconfigured"` — token belum ada di environment Production atau deployment belum di-redeploy.
 
 Tanpa Blob, aplikasi tetap berjalan, tetapi upload gambar produk akan mengembalikan `503`.
 
@@ -399,7 +406,7 @@ Untuk kontrol penuh, jalankan `npm run db:migrate` secara manual dari mesin loka
 
 - **SSE dinonaktifkan**; aplikasi otomatis memakai polling 12 detik.
 - **Filesystem read-only**; gunakan Vercel Blob untuk gambar.
-- **Upload diproses di memori**; batas 5 MB per gambar.
+- **Upload gambar langsung ke Blob** dari browser; batas 5 MB per gambar. Jalur upload multipart ke server hanya dipakai untuk development/self-host.
 - **Fungsi memiliki batas durasi**; `maxDuration` diset 30 detik.
 - **Cookie sesi `secure`** aktif karena `NODE_ENV=production`; akses harus melalui HTTPS (domain Vercel sudah HTTPS).
 - **Neon pooled connection** disarankan karena fungsi serverless membuka/menutup koneksi secara dinamis.
@@ -408,7 +415,7 @@ Untuk kontrol penuh, jalankan `npm run db:migrate` secara manual dari mesin loka
 
 ### 7. Checklist setelah deploy
 
-1. Buka `https://domain-anda.vercel.app/api/health` — pastikan `database: connected` dan `realtime: polling`.
+1. Buka `https://domain-anda.vercel.app/api/health` — pastikan `database: connected`, `realtime: polling`, dan `storage: blob`.
 2. Buka halaman login dan masuk sebagai owner.
 3. Cek menu **Produk**, **Transaksi**, dan **Sesi Kas**.
 4. Upload satu gambar produk untuk memastikan Blob aktif.

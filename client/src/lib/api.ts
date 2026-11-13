@@ -51,6 +51,11 @@ interface RequestOptions {
   signal?: AbortSignal;
 }
 
+interface UploadConfig {
+  mode: "blob" | "local" | "unavailable";
+  maxSize: number;
+}
+
 async function request<T>(path: string, options: RequestOptions = {}): Promise<T> {
   const headers: Record<string, string> = { Accept: "application/json" };
   let body: BodyInit | undefined;
@@ -99,12 +104,12 @@ async function request<T>(path: string, options: RequestOptions = {}): Promise<T
         ? (errorPayload.details as Record<string, string>)
         : undefined;
 
-    throw new ApiError(
-      errorPayload?.message || "Terjadi kesalahan. Silakan coba lagi.",
-      response.status,
-      errorPayload?.code,
-      details,
-    );
+    let message = errorPayload?.message;
+    if (!message && response.status === 413) {
+      message = "Ukuran file terlalu besar untuk server. Gunakan gambar yang lebih kecil.";
+    }
+
+    throw new ApiError(message || "Terjadi kesalahan. Silakan coba lagi.", response.status, errorPayload?.code, details);
   }
 
   return payload as T;
@@ -214,7 +219,51 @@ export const api = {
       request<{ store: Store; message: string }>("/settings", { method: "PUT", body: input }),
   },
   uploads: {
-    productImage: (file: File) => {
+    config: () => request<UploadConfig>("/uploads/config"),
+    productImage: async (file: File) => {
+      const uploadConfig = await request<UploadConfig>("/uploads/config");
+
+      if (uploadConfig.mode === "unavailable") {
+        throw new ApiError(
+          "Penyimpanan gambar belum dikonfigurasi. Hubungkan Vercel Blob ke project (BLOB_READ_WRITE_TOKEN).",
+          503,
+          "UPLOAD_STORAGE_UNAVAILABLE",
+        );
+      }
+
+      if (uploadConfig.mode === "blob") {
+        const { upload } = await import("@vercel/blob/client");
+        const extension = file.type === "image/png" ? ".png" : file.type === "image/webp" ? ".webp" : ".jpg";
+        const randomId =
+          typeof crypto !== "undefined" && "randomUUID" in crypto
+            ? crypto.randomUUID()
+            : `${Date.now()}-${Math.random().toString(36).slice(2)}`;
+        const pathname = `products/${randomId}${extension}`;
+
+        try {
+          const blob = await upload(pathname, file, {
+            access: "public",
+            handleUploadUrl: "/api/uploads/blob",
+            contentType: file.type,
+            multipart: false,
+          });
+          return {
+            url: blob.url,
+            filename: pathname.split("/").pop() || pathname,
+            size: file.size,
+          };
+        } catch (error) {
+          const message = error instanceof Error && error.message ? error.message : "";
+          throw new ApiError(
+            message.includes("client token")
+              ? "Penyimpanan gambar menolak unggahan. Pastikan Vercel Blob sudah terhubung dan di-redeploy."
+              : "Gagal mengunggah gambar ke penyimpanan. Silakan coba lagi.",
+            0,
+            "UPLOAD_FAILED",
+          );
+        }
+      }
+
       const formData = new FormData();
       formData.append("image", file);
       return request<{ url: string; filename: string; size: number }>("/uploads/product-image", {
