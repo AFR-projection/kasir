@@ -44,6 +44,7 @@ interface TransactionItemRow {
   unit_price: number;
   discount_amount: number;
   rounding_amount: number;
+  negotiation_mode: "unit" | "total" | null;
   line_total: number;
 }
 
@@ -83,7 +84,7 @@ async function getTransactionDetailById(id: string): Promise<TransactionDetailDt
 
   const itemsResult = await pool.query<TransactionItemRow>(
     `SELECT id, product_id, product_name, unit, quantity, list_unit_price,
-            unit_price, discount_amount, rounding_amount, line_total
+            unit_price, discount_amount, rounding_amount, negotiation_mode, line_total
      FROM transaction_items
      WHERE transaction_id = $1
      ORDER BY created_at ASC, id ASC`,
@@ -105,6 +106,7 @@ async function getTransactionDetailById(id: string): Promise<TransactionDetailDt
       listLineTotal: roundMoney(lineTotal - roundingAmount + discountAmount),
       discountAmount,
       roundingAmount,
+      negotiationMode: item.negotiation_mode ?? null,
       lineTotal,
     };
   });
@@ -228,7 +230,10 @@ transactionsRouter.post(
     const body = transactionInputSchema.parse(req.body);
     const paymentAmount = roundMoney(body.amountPaid);
 
-    const requestedItems = new Map<string, { quantity: number; unitPrice: number | null }>();
+    const requestedItems = new Map<
+      string,
+      { quantity: number; unitPrice: number | null; negotiatedTotal: number | null }
+    >();
     for (const item of body.items) {
       if (requestedItems.has(item.productId)) {
         throw new AppError(400, "Produk yang sama tidak boleh muncul lebih dari sekali dalam keranjang.", {
@@ -239,9 +244,15 @@ transactionsRouter.post(
       if (quantity <= 0) {
         throw new AppError(400, "Jumlah produk tidak valid.");
       }
+      if (item.unitPrice !== undefined && item.negotiatedTotal !== undefined) {
+        throw new AppError(400, "Pilih nego harga satuan atau total item, bukan keduanya.", {
+          code: "INVALID_NEGOTIATION",
+        });
+      }
       requestedItems.set(item.productId, {
         quantity,
         unitPrice: item.unitPrice === undefined ? null : roundMoney(item.unitPrice),
+        negotiatedTotal: item.negotiatedTotal === undefined ? null : roundMoney(item.negotiatedTotal),
       });
     }
     const productIds = Array.from(requestedItems.keys()).sort();
@@ -304,6 +315,7 @@ transactionsRouter.post(
           listLineTotal: number;
           discountAmount: number;
           roundingAmount: number;
+          negotiationMode: "unit" | "total" | null;
           lineTotal: number;
         }> = [];
 
@@ -327,37 +339,66 @@ transactionsRouter.post(
           }
 
           const listUnitPrice = roundMoney(Number(product.selling_price));
+          const costPrice = roundMoney(Number(product.cost_price));
+          const listLineTotal = roundMoney(listUnitPrice * quantity);
           let unitPrice = listUnitPrice;
+          let lineTotal: number;
+          let discountAmount: number;
+          let roundingAmount = 0;
+          let negotiationMode: "unit" | "total" | null = null;
 
-          if (requested.unitPrice !== null) {
-            if (requested.unitPrice > listUnitPrice) {
+          if (requested.negotiatedTotal !== null) {
+            if (requested.negotiatedTotal > listLineTotal) {
               throw new AppError(
                 400,
-                `Harga nego "${product.name}" tidak boleh melebihi harga normal (${formatRupiah(listUnitPrice)}).`,
+                `Total nego "${product.name}" tidak boleh melebihi harga normal (${formatRupiah(listLineTotal)}).`,
                 { code: "PRICE_ABOVE_LIST" },
               );
             }
 
-            const costPrice = roundMoney(Number(product.cost_price));
-            if (costPrice > 0 && requested.unitPrice < costPrice) {
+            const costLineTotal = roundMoney(costPrice * quantity);
+            if (costPrice > 0 && requested.negotiatedTotal < costLineTotal) {
               throw new AppError(
                 400,
-                `Harga nego "${product.name}" di bawah harga modal (${formatRupiah(costPrice)}).`,
+                `Total nego "${product.name}" di bawah harga modal (${formatRupiah(costLineTotal)}).`,
                 { code: "PRICE_BELOW_COST" },
               );
             }
 
-            unitPrice = requested.unitPrice;
-          }
+            lineTotal = requested.negotiatedTotal;
+            unitPrice = Math.min(listUnitPrice, roundMoney(lineTotal / quantity));
+            discountAmount = roundMoney(listLineTotal - lineTotal);
+            negotiationMode = lineTotal < listLineTotal ? "total" : null;
+          } else {
+            if (requested.unitPrice !== null) {
+              if (requested.unitPrice > listUnitPrice) {
+                throw new AppError(
+                  400,
+                  `Harga nego "${product.name}" tidak boleh melebihi harga normal (${formatRupiah(listUnitPrice)}).`,
+                  { code: "PRICE_ABOVE_LIST" },
+                );
+              }
 
-          const listLineTotal = roundMoney(listUnitPrice * quantity);
-          const exactLineTotal = roundMoney(unitPrice * quantity);
-          const discountAmount = roundMoney(listLineTotal - exactLineTotal);
-          const roundingAmount =
-            requested.unitPrice === null && scaleRounding > 0 && isScaleUnit(product.unit)
-              ? roundMoney(roundToScaleStep(exactLineTotal, scaleRounding) - exactLineTotal)
-              : 0;
-          const lineTotal = roundMoney(exactLineTotal + roundingAmount);
+              if (costPrice > 0 && requested.unitPrice < costPrice) {
+                throw new AppError(
+                  400,
+                  `Harga nego "${product.name}" di bawah harga modal (${formatRupiah(costPrice)}).`,
+                  { code: "PRICE_BELOW_COST" },
+                );
+              }
+
+              unitPrice = requested.unitPrice;
+            }
+
+            const exactLineTotal = roundMoney(unitPrice * quantity);
+            discountAmount = roundMoney(listLineTotal - exactLineTotal);
+            roundingAmount =
+              requested.unitPrice === null && scaleRounding > 0 && isScaleUnit(product.unit)
+                ? roundMoney(roundToScaleStep(exactLineTotal, scaleRounding) - exactLineTotal)
+                : 0;
+            lineTotal = roundMoney(exactLineTotal + roundingAmount);
+            negotiationMode = requested.unitPrice !== null && unitPrice < listUnitPrice ? "unit" : null;
+          }
 
           if (listLineTotal > 999_999_999_999.99 || lineTotal > 999_999_999_999.99) {
             throw new AppError(400, "Total item melebihi batas maksimum transaksi.");
@@ -374,6 +415,7 @@ transactionsRouter.post(
             listLineTotal,
             discountAmount,
             roundingAmount,
+            negotiationMode,
             lineTotal,
           });
         }
@@ -436,8 +478,8 @@ transactionsRouter.post(
           await client.query(
             `INSERT INTO transaction_items
                (transaction_id, product_id, product_name, unit, quantity, list_unit_price,
-                unit_price, unit_cost, discount_amount, rounding_amount, line_total)
-             VALUES ($1, $2, $3, $4, $5, $6, $7, $8, $9, $10, $11)`,
+                unit_price, unit_cost, discount_amount, rounding_amount, negotiation_mode, line_total)
+             VALUES ($1, $2, $3, $4, $5, $6, $7, $8, $9, $10, $11, $12)`,
             [
               transactionId,
               item.product.id,
@@ -449,6 +491,7 @@ transactionsRouter.post(
               Number(item.product.cost_price).toFixed(2),
               item.discountAmount.toFixed(2),
               item.roundingAmount.toFixed(2),
+              item.negotiationMode,
               item.lineTotal.toFixed(2),
             ],
           );

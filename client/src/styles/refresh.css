@@ -4610,16 +4610,29 @@ b {
 
   .price-negotiation__preview {
     display: grid;
-    grid-template-columns: minmax(0, 1fr);
+    grid-template-columns: repeat(3, minmax(0, 1fr));
   }
 
   .price-negotiation__preview > div {
-    border-right: 0;
-    border-bottom: 1px solid var(--line);
+    padding: 7px 9px;
+    border-right: 1px solid var(--line);
+    border-bottom: 0;
   }
 
   .price-negotiation__preview > div:last-child {
-    border-bottom: 0;
+    border-right: 0;
+  }
+
+  .price-negotiation__preview strong {
+    font-size: 11.5px;
+  }
+
+  .price-negotiation__quick-btn {
+    min-height: 42px;
+  }
+
+  .price-negotiation__line-total {
+    padding: 9px 11px;
   }
 
   .cash-close-summary {
@@ -4855,4 +4868,36 @@ b {
   font-size: 8.5px !important;
   font-weight: 700;
   white-space: nowrap;
+}
+
+.price-negotiation__modes {
+  display: grid;
+  grid-template-columns: repeat(2, minmax(0, 1fr));
+  gap: 5px;
+  padding: 4px;
+  border: 1px solid var(--line);
+  border-radius: 9px;
+  background: var(--surface-warm);
+}
+
+.price-negotiation__mode {
+  min-height: 36px;
+  padding: 0 10px;
+  border: 0;
+  border-radius: 6px;
+  color: var(--muted);
+  background: transparent;
+  font-size: 11.5px;
+  font-weight: 700;
+  transition: color 0.16s ease, background 0.16s ease, box-shadow 0.16s ease;
+}
+
+.price-negotiation__mode:hover {
+  color: var(--brand-deep);
+}
+
+.price-negotiation__mode--active {
+  color: var(--brand-deep);
+  background: #ffffff;
+  box-shadow: 0 1px 3px rgba(12, 45, 32, 0.12);
 }

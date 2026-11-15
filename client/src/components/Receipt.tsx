@@ -49,13 +49,19 @@ export function Receipt({ transaction }: { transaction: TransactionDetail }) {
             <div className="receipt__item-name">{item.productName}</div>
             <div className="receipt__item-detail">
               <span>
-                {formatQuantity(item.quantity)} {item.unit} × {formatMoney(item.unitPrice)}
+                {item.negotiationMode === "total"
+                  ? `${formatQuantity(item.quantity)} ${item.unit}`
+                  : `${formatQuantity(item.quantity)} ${item.unit} × ${formatMoney(item.unitPrice)}`}
               </span>
               <strong>{formatMoney(item.lineTotal)}</strong>
             </div>
             {item.discountAmount > 0 && (
               <div className="receipt__item-discount">
-                <span>Harga normal {formatMoney(item.listUnitPrice)}</span>
+                <span>
+                  {item.negotiationMode === "total"
+                    ? `Nego total · normal ${formatMoney(item.listLineTotal)}`
+                    : `Harga normal ${formatMoney(item.listUnitPrice)}`}
+                </span>
                 <span>−{formatMoney(item.discountAmount)}</span>
               </div>
             )}

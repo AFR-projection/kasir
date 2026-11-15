@@ -170,6 +170,7 @@ export interface TransactionItem {
   listLineTotal: number;
   discountAmount: number;
   roundingAmount: number;
+  negotiationMode: "unit" | "total" | null;
   lineTotal: number;
 }
 
@@ -195,7 +196,7 @@ export interface TransactionListResponse {
 }
 
 export interface CheckoutInput {
-  items: Array<{ productId: string; quantity: number; unitPrice?: number }>;
+  items: Array<{ productId: string; quantity: number; unitPrice?: number; negotiatedTotal?: number }>;
   paymentMethod: PaymentMethod;
   amountPaid: number;
   notes?: string;

@@ -62,6 +62,7 @@ const sampleReceipt: TransactionDetail = {
       listLineTotal: 24000,
       discountAmount: 4000,
       roundingAmount: 0,
+      negotiationMode: "unit",
       lineTotal: 20000,
     },
     {
@@ -75,6 +76,7 @@ const sampleReceipt: TransactionDetail = {
       listLineTotal: sampleListLineTotal,
       discountAmount: 0,
       roundingAmount: -375,
+      negotiationMode: null,
       lineTotal: sampleListLineTotal - 375,
     },
   ],

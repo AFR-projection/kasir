@@ -78,6 +78,7 @@ export interface TransactionItemDto {
   listLineTotal: number;
   discountAmount: number;
   roundingAmount: number;
+  negotiationMode: "unit" | "total" | null;
   lineTotal: number;
 }
 

@@ -300,6 +300,22 @@ const allowNegativeExpectedCash: Migration = {
   `,
 };
 
+const negotiationModeSchema: Migration = {
+  name: "007_negotiation_mode",
+  sql: `
+    -- Bedakan nego harga satuan dengan nego total item agar riwayat dan
+    -- struk dapat menampilkan cara negosiasi yang dipakai kasir.
+    ALTER TABLE transaction_items
+      ADD COLUMN negotiation_mode TEXT,
+      ADD CONSTRAINT transaction_items_negotiation_mode_check
+        CHECK (negotiation_mode IS NULL OR negotiation_mode IN ('unit', 'total'));
+
+    UPDATE transaction_items
+    SET negotiation_mode = 'unit'
+    WHERE discount_amount > 0 AND negotiation_mode IS NULL;
+  `,
+};
+
 const scaleRoundingSchema: Migration = {
   name: "006_scale_rounding",
   sql: `
@@ -335,4 +351,5 @@ export const migrations: Migration[] = [
   cashExpensesSchema,
   allowNegativeExpectedCash,
   scaleRoundingSchema,
+  negotiationModeSchema,
 ];

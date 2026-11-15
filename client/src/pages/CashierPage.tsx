@@ -65,6 +65,7 @@ interface CartLine {
   productId: string;
   quantity: number;
   negotiatedPrice?: number;
+  negotiatedTotal?: number;
 }
 
 interface CartView {
@@ -78,6 +79,7 @@ interface CartView {
   lineTotal: number;
   discountAmount: number;
   negotiated: boolean;
+  negotiationMode: "unit" | "total" | null;
 }
 
 const paymentOptions: Array<{
@@ -162,22 +164,40 @@ export function CashierPage() {
             lineTotal: 0,
             discountAmount: 0,
             negotiated: false,
+            negotiationMode: null,
           };
         }
 
         const listUnitPrice = roundMoneyValue(product.sellingPrice);
-        const hasNegotiatedPrice = line.negotiatedPrice !== undefined;
-        const unitPrice = hasNegotiatedPrice
-          ? roundMoneyValue(Math.min(listUnitPrice, Math.max(0, line.negotiatedPrice ?? 0)))
-          : listUnitPrice;
         const listLineTotal = roundMoneyValue(listUnitPrice * line.quantity);
-        const exactLineTotal = roundMoneyValue(unitPrice * line.quantity);
-        const discountAmount = roundMoneyValue(listLineTotal - exactLineTotal);
-        const roundingAmount =
-          !hasNegotiatedPrice && store.scaleRounding > 0 && isScaleUnit(product.unit)
-            ? roundMoneyValue(roundToScaleStepValue(exactLineTotal, store.scaleRounding) - exactLineTotal)
-            : 0;
-        const lineTotal = roundMoneyValue(exactLineTotal + roundingAmount);
+        const hasNegotiatedTotal = line.negotiatedTotal !== undefined;
+        const hasNegotiatedPrice = line.negotiatedPrice !== undefined;
+        let unitPrice = listUnitPrice;
+        let lineTotal = listLineTotal;
+        let discountAmount = 0;
+        let roundingAmount = 0;
+        let negotiationMode: "unit" | "total" | null = null;
+
+        if (hasNegotiatedTotal) {
+          lineTotal = roundMoneyValue(
+            Math.min(listLineTotal, Math.max(0, line.negotiatedTotal ?? 0)),
+          );
+          unitPrice = roundMoneyValue(lineTotal / line.quantity);
+          discountAmount = roundMoneyValue(listLineTotal - lineTotal);
+          negotiationMode = lineTotal < listLineTotal ? "total" : null;
+        } else {
+          unitPrice = hasNegotiatedPrice
+            ? roundMoneyValue(Math.min(listUnitPrice, Math.max(0, line.negotiatedPrice ?? 0)))
+            : listUnitPrice;
+          const exactLineTotal = roundMoneyValue(unitPrice * line.quantity);
+          discountAmount = roundMoneyValue(listLineTotal - exactLineTotal);
+          roundingAmount =
+            !hasNegotiatedPrice && store.scaleRounding > 0 && isScaleUnit(product.unit)
+              ? roundMoneyValue(roundToScaleStepValue(exactLineTotal, store.scaleRounding) - exactLineTotal)
+              : 0;
+          lineTotal = roundMoneyValue(exactLineTotal + roundingAmount);
+          negotiationMode = hasNegotiatedPrice && unitPrice < listUnitPrice ? "unit" : null;
+        }
 
         return {
           productId: line.productId,
@@ -189,7 +209,8 @@ export function CashierPage() {
           roundingAmount,
           lineTotal,
           discountAmount,
-          negotiated: unitPrice < listUnitPrice,
+          negotiated: discountAmount > 0,
+          negotiationMode,
         };
       }),
     [cart, productsById, store.scaleRounding],
@@ -218,8 +239,13 @@ export function CashierPage() {
           toast.info(`Stok ${product.name} hanya tersisa ${formatQuantity(product.stock)} ${product.unit}.`);
           return current;
         }
+        if (existing.negotiatedTotal !== undefined) {
+          toast.info(`Nego total ${product.name} direset karena jumlah berubah.`);
+        }
         return current.map((line) =>
-          line.productId === product.id ? { ...line, quantity: nextQuantity } : line,
+          line.productId === product.id
+            ? { ...line, quantity: nextQuantity, negotiatedTotal: undefined }
+            : line,
         );
       }
       const initialQuantity = roundQuantityValue(Math.min(step, product.stock));
@@ -235,18 +261,46 @@ export function CashierPage() {
     if (sanitized > product.stock) {
       toast.info(`Stok ${product.name} hanya tersisa ${formatQuantity(product.stock)} ${product.unit}.`);
     }
-    setCart((current) =>
-      current.map((line) => (line.productId === productId ? { ...line, quantity: sanitized } : line)),
-    );
-  };
-
-  const setNegotiatedPrice = (productId: string, price: number | null) => {
+    const existing = cart.find((line) => line.productId === productId);
+    if (existing?.negotiatedTotal !== undefined && sanitized !== existing.quantity) {
+      toast.info(`Nego total ${product.name} direset karena jumlah berubah.`);
+    }
     setCart((current) =>
       current.map((line) =>
         line.productId === productId
-          ? { ...line, negotiatedPrice: price === null ? undefined : roundMoneyValue(price) }
+          ? {
+              ...line,
+              quantity: sanitized,
+              negotiatedTotal: sanitized === line.quantity ? line.negotiatedTotal : undefined,
+            }
           : line,
       ),
+    );
+  };
+
+  const setLineNegotiation = (
+    productId: string,
+    negotiation: { mode: "unit" | "total"; value: number } | null,
+  ) => {
+    setCart((current) =>
+      current.map((line) => {
+        if (line.productId !== productId) return line;
+        if (!negotiation) {
+          return { ...line, negotiatedPrice: undefined, negotiatedTotal: undefined };
+        }
+        if (negotiation.mode === "unit") {
+          return {
+            ...line,
+            negotiatedPrice: roundMoneyValue(negotiation.value),
+            negotiatedTotal: undefined,
+          };
+        }
+        return {
+          ...line,
+          negotiatedTotal: roundMoneyValue(negotiation.value),
+          negotiatedPrice: undefined,
+        };
+      }),
     );
   };
 
@@ -558,7 +612,9 @@ export function CashierPage() {
                           onClick={() => setNegotiatingProductId(product.id)}
                           aria-label={`Atur harga nego ${product.name}`}
                         >
-                          {line.negotiated ? (
+                          {line.negotiationMode === "total" ? (
+                            <span>Nego total</span>
+                          ) : line.negotiationMode === "unit" ? (
                             <>
                               <s>{formatMoney(line.listUnitPrice)}</s>
                               <strong>{formatMoney(line.unitPrice)}</strong>
@@ -577,6 +633,8 @@ export function CashierPage() {
                         {line.discountAmount > 0 && (
                           <span className="cart-line__savings">
                             Hemat {formatMoney(line.discountAmount)}
+                            {line.negotiationMode === "total" &&
+                              ` · setara ${formatMoney(line.unitPrice)}/${product.unit}`}
                           </span>
                         )}
                       </div>
@@ -721,8 +779,8 @@ export function CashierPage() {
         <PriceNegotiationModal
           line={negotiatingLine}
           onClose={() => setNegotiatingProductId(null)}
-          onApply={(price) => {
-            setNegotiatedPrice(negotiatingLine.productId, price);
+          onApply={(negotiation) => {
+            setLineNegotiation(negotiatingLine.productId, negotiation);
             setNegotiatingProductId(null);
           }}
         />
@@ -807,42 +865,84 @@ interface PaymentModalProps {
   onSuccess: (transaction: TransactionDetail) => void;
 }
 
+interface NegotiationResult {
+  mode: "unit" | "total";
+  value: number;
+}
+
 interface PriceNegotiationModalProps {
   line: CartView;
   onClose: () => void;
-  onApply: (price: number | null) => void;
+  onApply: (negotiation: NegotiationResult | null) => void;
 }
 
 function PriceNegotiationModal({ line, onClose, onApply }: PriceNegotiationModalProps) {
   const product = line.product;
-  const [input, setInput] = useState(String(line.unitPrice));
+  const initialMode: "unit" | "total" =
+    line.negotiationMode ?? (product && isScaleUnit(product.unit) ? "total" : "unit");
+  const initialValue =
+    initialMode === "total"
+      ? line.negotiationMode === "total"
+        ? line.lineTotal
+        : line.listLineTotal
+      : line.negotiationMode === "unit"
+        ? line.unitPrice
+        : line.listUnitPrice;
+  const [mode, setMode] = useState<"unit" | "total">(initialMode);
+  const [input, setInput] = useState(String(initialValue));
   const [error, setError] = useState("");
 
   if (!product) return null;
 
   const normalPrice = line.listUnitPrice;
+  const normalTotal = line.listLineTotal;
   const costPrice = roundMoneyValue(product.costPrice);
-  const floorPrice = costPrice > 0 ? costPrice : 0;
+  const costTotal = roundMoneyValue(costPrice * line.quantity);
+  const baseValue = mode === "unit" ? normalPrice : normalTotal;
+  const floorValue = mode === "unit" ? (costPrice > 0 ? costPrice : 0) : costPrice > 0 ? costTotal : 0;
   const numericValue = Number(input);
   const hasInput = input.trim() !== "" && Number.isFinite(numericValue);
-  const previewPrice = hasInput
-    ? roundMoneyValue(Math.min(normalPrice, Math.max(0, numericValue)))
-    : line.unitPrice;
-  const previewLineTotal = roundMoneyValue(previewPrice * line.quantity);
-  const saving = roundMoneyValue(line.listLineTotal - previewLineTotal);
+  const previewValue = hasInput
+    ? roundMoneyValue(Math.min(baseValue, Math.max(0, numericValue)))
+    : mode === "unit"
+      ? line.listUnitPrice
+      : line.listLineTotal;
+  const previewUnitPrice =
+    mode === "unit" ? previewValue : roundMoneyValue(previewValue / line.quantity);
+  const previewLineTotal =
+    mode === "unit" ? roundMoneyValue(previewUnitPrice * line.quantity) : previewValue;
+  const saving = roundMoneyValue(normalTotal - previewLineTotal);
   const savingPercent =
-    normalPrice > 0 ? Math.max(0, Math.round(((normalPrice - previewPrice) / normalPrice) * 100)) : 0;
+    normalTotal > 0 ? Math.max(0, Math.round((saving / normalTotal) * 100)) : 0;
+  const isDiscounted =
+    mode === "unit" ? previewUnitPrice < normalPrice : previewLineTotal < normalTotal;
+
+  const switchMode = (nextMode: "unit" | "total") => {
+    if (nextMode === mode) return;
+    setMode(nextMode);
+    setInput(String(nextMode === "unit" ? previewUnitPrice : previewLineTotal));
+    setError("");
+  };
 
   const validate = (): string => {
     if (input.trim() === "" || !Number.isFinite(numericValue)) {
-      return "Masukkan harga nego yang valid.";
+      return mode === "unit" ? "Masukkan harga nego yang valid." : "Masukkan total nego yang valid.";
     }
-    if (numericValue < 0) return "Harga nego tidak boleh negatif.";
-    if (numericValue > normalPrice) {
-      return `Harga nego tidak boleh melebihi harga normal (${formatMoney(normalPrice)}).`;
+    if (numericValue < 0) return "Nilai nego tidak boleh negatif.";
+    if (mode === "unit") {
+      if (numericValue > normalPrice) {
+        return `Harga nego tidak boleh melebihi harga normal (${formatMoney(normalPrice)}).`;
+      }
+      if (costPrice > 0 && numericValue < costPrice) {
+        return `Harga nego di bawah harga modal. Harga minimal ${formatMoney(costPrice)}.`;
+      }
+      return "";
     }
-    if (costPrice > 0 && numericValue < costPrice) {
-      return `Harga nego di bawah harga modal. Harga minimal ${formatMoney(costPrice)}.`;
+    if (numericValue > normalTotal) {
+      return `Total nego tidak boleh melebihi harga normal (${formatMoney(normalTotal)}).`;
+    }
+    if (costPrice > 0 && numericValue < costTotal) {
+      return `Total nego di bawah harga modal. Minimal ${formatMoney(costTotal)}.`;
     }
     return "";
   };
@@ -854,7 +954,7 @@ function PriceNegotiationModal({ line, onClose, onApply }: PriceNegotiationModal
       setError(validationError);
       return;
     }
-    onApply(roundMoneyValue(numericValue) === normalPrice ? null : roundMoneyValue(numericValue));
+    onApply(isDiscounted ? { mode, value: roundMoneyValue(numericValue) } : null);
   };
 
   const quickDiscounts = [5, 10, 15, 20];
@@ -876,7 +976,7 @@ function PriceNegotiationModal({ line, onClose, onApply }: PriceNegotiationModal
             form="price-negotiation-form"
             icon={<BadgePercent size={17} />}
           >
-            Terapkan Harga
+            Terapkan Nego
           </Button>
         </>
       }
@@ -889,27 +989,55 @@ function PriceNegotiationModal({ line, onClose, onApply }: PriceNegotiationModal
             <span>
               Harga normal <b>{formatMoney(normalPrice)}</b> / {product.unit}
             </span>
+            <span>
+              Total {formatQuantity(line.quantity)} {product.unit} · <b>{formatMoney(normalTotal)}</b>
+            </span>
           </div>
         </div>
 
+        <div className="price-negotiation__modes" role="tablist" aria-label="Cara nego">
+          <button
+            type="button"
+            role="tab"
+            aria-selected={mode === "unit"}
+            className={`price-negotiation__mode${mode === "unit" ? " price-negotiation__mode--active" : ""}`}
+            onClick={() => switchMode("unit")}
+          >
+            Harga per {product.unit}
+          </button>
+          <button
+            type="button"
+            role="tab"
+            aria-selected={mode === "total"}
+            className={`price-negotiation__mode${mode === "total" ? " price-negotiation__mode--active" : ""}`}
+            onClick={() => switchMode("total")}
+          >
+            Total item
+          </button>
+        </div>
+
         <Field
-          label={`Harga nego per ${product.unit}`}
-          htmlFor="negotiated-price"
+          label={mode === "unit" ? `Harga nego per ${product.unit}` : "Total nego untuk item ini"}
+          htmlFor="negotiated-value"
           hint={
-            costPrice > 0
-              ? `Harga minimal ${formatMoney(costPrice)} (harga modal).`
-              : "Harga modal belum diatur. Harga nego maksimal sebesar harga normal."
+            mode === "unit"
+              ? costPrice > 0
+                ? `Harga minimal ${formatMoney(costPrice)} (harga modal).`
+                : "Harga modal belum diatur. Harga nego maksimal sebesar harga normal."
+              : costPrice > 0
+                ? `Total minimal ${formatMoney(costTotal)} (harga modal). Cocok untuk barang kurang segar.`
+                : "Total nego maksimal sebesar harga normal item."
           }
           required
         >
           <div className="payment-input">
             <span>Rp</span>
             <input
-              id="negotiated-price"
+              id="negotiated-value"
               type="number"
               inputMode="decimal"
-              min={floorPrice}
-              max={normalPrice}
+              min={floorValue}
+              max={baseValue}
               step="100"
               value={input}
               onChange={(event) => {
@@ -923,7 +1051,7 @@ function PriceNegotiationModal({ line, onClose, onApply }: PriceNegotiationModal
 
         <div className="price-negotiation__quick" aria-label="Diskon cepat">
           {quickDiscounts.map((percent) => {
-            const price = Math.max(floorPrice, Math.round(normalPrice * (1 - percent / 100)));
+            const price = Math.max(floorValue, Math.round(baseValue * (1 - percent / 100)));
             return (
               <button
                 key={percent}
@@ -935,7 +1063,7 @@ function PriceNegotiationModal({ line, onClose, onApply }: PriceNegotiationModal
                   setInput(String(price));
                   setError("");
                 }}
-                disabled={price >= normalPrice}
+                disabled={price >= baseValue}
               >
                 <strong>−{percent}%</strong>
                 <span>{formatMoneyCompact(price)}</span>
@@ -946,14 +1074,14 @@ function PriceNegotiationModal({ line, onClose, onApply }: PriceNegotiationModal
 
         <div className="price-negotiation__preview">
           <div>
-            <span>Harga normal</span>
+            <span>{mode === "unit" ? "Harga normal" : "Total normal"}</span>
             <strong>
-              <s>{formatMoney(normalPrice)}</s>
+              <s>{formatMoney(baseValue)}</s>
             </strong>
           </div>
           <div>
-            <span>Harga nego</span>
-            <strong>{formatMoney(previewPrice)}</strong>
+            <span>{mode === "unit" ? "Harga nego" : "Total nego"}</span>
+            <strong>{formatMoney(previewValue)}</strong>
           </div>
           <div className="price-negotiation__preview-saving">
             <span>Hemat</span>
@@ -965,16 +1093,20 @@ function PriceNegotiationModal({ line, onClose, onApply }: PriceNegotiationModal
 
         <div className="price-negotiation__line-total">
           <span>
-            {formatQuantity(line.quantity)} {product.unit} × {formatMoney(previewPrice)}
+            {mode === "unit"
+              ? `${formatQuantity(line.quantity)} ${product.unit} × ${formatMoney(previewUnitPrice)}`
+              : `${formatQuantity(line.quantity)} ${product.unit} · setara ${formatMoney(previewUnitPrice)} / ${product.unit}`}
           </span>
           <strong>{formatMoney(previewLineTotal)}</strong>
         </div>
 
-        {isScaleUnit(product.unit) && (
-          <p className="price-negotiation__note">
-            Harga nego dihitung presisi dan tidak ikut pembulatan timbangan.
-          </p>
-        )}
+        <p className="price-negotiation__note">
+          {mode === "total"
+            ? "Total nego dipakai apa adanya dan tidak ikut pembulatan timbangan."
+            : isScaleUnit(product.unit)
+              ? "Harga nego dihitung presisi dan tidak ikut pembulatan timbangan."
+              : "Nego harga satuan berlaku untuk semua jumlah di baris ini."}
+        </p>
 
         {line.negotiated && (
           <button
@@ -1049,7 +1181,8 @@ function PaymentModal({
         items: cart.map((line) => ({
           productId: line.productId,
           quantity: line.quantity,
-          unitPrice: line.negotiated ? line.unitPrice : undefined,
+          unitPrice: line.negotiationMode === "unit" ? line.unitPrice : undefined,
+          negotiatedTotal: line.negotiationMode === "total" ? line.lineTotal : undefined,
         })),
         paymentMethod: method,
         amountPaid: method === "cash" ? roundMoneyValue(amountPaid) : total,
@@ -1155,9 +1288,19 @@ function PaymentModal({
                     </span>
                   </div>
                   <div className="payment-negotiation-item__price">
-                    <s>{formatMoney(line.listUnitPrice)}</s>
-                    <strong>{formatMoney(line.unitPrice)}</strong>
-                    <span>/ {line.product?.unit}</span>
+                    {line.negotiationMode === "total" ? (
+                      <>
+                        <s>{formatMoney(line.listLineTotal)}</s>
+                        <strong>{formatMoney(line.lineTotal)}</strong>
+                        <span>total item</span>
+                      </>
+                    ) : (
+                      <>
+                        <s>{formatMoney(line.listUnitPrice)}</s>
+                        <strong>{formatMoney(line.unitPrice)}</strong>
+                        <span>/ {line.product?.unit}</span>
+                      </>
+                    )}
                   </div>
                   <span className="payment-negotiation-item__saving">
                     −{formatMoney(line.discountAmount)}

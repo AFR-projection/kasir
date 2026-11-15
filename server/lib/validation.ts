@@ -85,6 +85,7 @@ export const transactionInputSchema = z.object({
         productId: uuidSchema,
         quantity: positiveQuantitySchema,
         unitPrice: moneySchema.optional(),
+        negotiatedTotal: moneySchema.optional(),
       }),
     )
     .min(1, "Keranjang tidak boleh kosong.")
