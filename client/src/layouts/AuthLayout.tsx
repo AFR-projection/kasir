@@ -1,5 +1,4 @@
 import type { ReactNode } from "react";
-import { CheckCircle2 } from "lucide-react";
 import { BrandMark } from "../components/ui";
 
 interface AuthLayoutProps {
@@ -14,9 +13,6 @@ export function AuthLayout({ eyebrow, headline, description, features, children 
   return (
     <div className="auth-page">
       <section className="auth-showcase">
-        <div className="auth-showcase__orb auth-showcase__orb--one" />
-        <div className="auth-showcase__orb auth-showcase__orb--two" />
-
         <div className="auth-showcase__brand">
           <BrandMark size="lg" />
           <div>
@@ -31,9 +27,9 @@ export function AuthLayout({ eyebrow, headline, description, features, children 
           <p className="auth-showcase__description">{description}</p>
 
           <ul className="auth-feature-list">
-            {features.map((feature) => (
+            {features.map((feature, index) => (
               <li key={feature}>
-                <CheckCircle2 size={18} />
+                <span className="auth-feature-list__index">{String(index + 1).padStart(2, "0")}</span>
                 <span>{feature}</span>
               </li>
             ))}

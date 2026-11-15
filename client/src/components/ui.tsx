@@ -122,7 +122,7 @@ export function PageError({ message, onRetry }: { message: string; onRetry?: () 
 export interface FieldProps {
   label: string;
   htmlFor?: string;
-  hint?: string;
+  hint?: ReactNode;
   error?: string;
   required?: boolean;
   children: ReactNode;

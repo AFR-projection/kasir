@@ -8,7 +8,6 @@ import {
   PackageSearch,
   ReceiptText,
   Settings,
-  Store as StoreIcon,
   UsersRound,
   Wallet,
   X,
@@ -17,15 +16,20 @@ import { useAuth } from "../context/AuthContext";
 import { useRealtime } from "../lib/realtime";
 import { Avatar, BrandMark, LiveIndicator } from "../components/ui";
 
-const navigation = [
+const primaryNavigation = [
   { to: "/owner", end: true, label: "Dashboard", icon: LayoutDashboard },
   { to: "/owner/products", label: "Produk", icon: PackageSearch },
   { to: "/owner/stock", label: "Stok & Riwayat", icon: Boxes },
   { to: "/owner/transactions", label: "Transaksi", icon: ReceiptText },
   { to: "/owner/cash-sessions", label: "Sesi Kas", icon: Wallet },
+];
+
+const systemNavigation = [
   { to: "/owner/employees", label: "Karyawan", icon: UsersRound },
   { to: "/owner/settings", label: "Pengaturan", icon: Settings },
 ];
+
+const navigation = [...primaryNavigation, ...systemNavigation];
 
 export function OwnerLayout() {
   const { user, store, logout } = useAuth();
@@ -33,6 +37,10 @@ export function OwnerLayout() {
   const location = useLocation();
   const realtimeStatus = useRealtime(true);
   const [menuOpen, setMenuOpen] = useState(false);
+
+  const activeItem = navigation.find((item) =>
+    "end" in item && item.end ? location.pathname === item.to : location.pathname.startsWith(item.to),
+  );
 
   const handleLogout = async () => {
     await logout();
@@ -67,25 +75,33 @@ export function OwnerLayout() {
           </button>
         </div>
 
-        <div className="owner-sidebar__store">
-          <span className="owner-sidebar__store-icon">
-            <StoreIcon size={16} />
-          </span>
-          <div>
-            <span>Dashboard Pemilik</span>
-            <strong>{store.storeName}</strong>
-          </div>
-        </div>
-
         <nav className="owner-nav" aria-label="Navigasi pemilik">
-          <p className="owner-nav__label">Menu utama</p>
-          {navigation.map((item) => {
+          <p className="owner-nav__label">Operasional</p>
+          {primaryNavigation.map((item) => {
             const Icon = item.icon;
             return (
               <NavLink
                 key={item.to}
                 to={item.to}
                 end={item.end}
+                className={({ isActive }) => `owner-nav__link${isActive ? " owner-nav__link--active" : ""}`}
+                onClick={() => setMenuOpen(false)}
+              >
+                <Icon size={19} />
+                <span>{item.label}</span>
+              </NavLink>
+            );
+          })}
+        </nav>
+
+        <nav className="owner-nav owner-nav--secondary" aria-label="Navigasi pengaturan">
+          <p className="owner-nav__label">Toko & akses</p>
+          {systemNavigation.map((item) => {
+            const Icon = item.icon;
+            return (
+              <NavLink
+                key={item.to}
+                to={item.to}
                 className={({ isActive }) => `owner-nav__link${isActive ? " owner-nav__link--active" : ""}`}
                 onClick={() => setMenuOpen(false)}
               >
@@ -124,6 +140,10 @@ export function OwnerLayout() {
           <div className="owner-topbar__mobile-brand">
             <BrandMark size="sm" />
             <span>KASIR</span>
+          </div>
+          <div className="owner-topbar__context">
+            <span>Ruang kerja</span>
+            <strong>{activeItem?.label ?? "Dashboard"}</strong>
           </div>
           <div className="owner-topbar__spacer" />
           <LiveIndicator status={realtimeStatus} />

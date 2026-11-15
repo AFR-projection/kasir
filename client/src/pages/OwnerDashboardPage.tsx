@@ -1,4 +1,4 @@
-import { useState } from "react";
+import { useId, useState } from "react";
 import { Link } from "react-router-dom";
 import { useQuery } from "@tanstack/react-query";
 import {
@@ -47,15 +47,37 @@ function MetricCard({
 }
 
 function SalesChart({ data }: { data: DashboardData["salesSeries"] }) {
+  const gradientId = useId().replace(/:/g, "");
   const max = Math.max(...data.map((day) => day.total), 1);
   const weekTotal = data.reduce((total, day) => total + day.total, 0);
+  const width = 720;
+  const height = 240;
+  const padding = { top: 20, right: 10, bottom: 30, left: 10 };
+  const plotWidth = width - padding.left - padding.right;
+  const plotHeight = height - padding.top - padding.bottom;
+  const step = data.length > 1 ? plotWidth / (data.length - 1) : 0;
+  const points = data.map((day, index) => ({
+    ...day,
+    x: padding.left + step * index,
+    y: padding.top + plotHeight - (day.total / max) * plotHeight,
+  }));
+  const linePath = points
+    .map((point, index) => `${index === 0 ? "M" : "L"}${point.x.toFixed(1)},${point.y.toFixed(1)}`)
+    .join(" ");
+  const first = points[0];
+  const last = points[points.length - 1];
+  const areaPath = `${linePath} L${last.x.toFixed(1)},${(padding.top + plotHeight).toFixed(1)} L${first.x.toFixed(1)},${(padding.top + plotHeight).toFixed(1)} Z`;
+  const gridLines = [0, 0.5, 1].map((ratio) => ({
+    y: padding.top + plotHeight * ratio,
+    value: max * (1 - ratio),
+  }));
 
   return (
     <section className="panel chart-panel">
       <div className="panel__header">
         <div>
           <p className="panel__eyebrow">Performa penjualan</p>
-          <h2>7 Hari Terakhir</h2>
+          <h2>Tujuh hari terakhir</h2>
         </div>
         <div className="chart-panel__total">
           <span>Total minggu ini</span>
@@ -63,24 +85,79 @@ function SalesChart({ data }: { data: DashboardData["salesSeries"] }) {
         </div>
       </div>
 
-      <div className="sales-chart" role="img" aria-label="Grafik penjualan tujuh hari terakhir">
-        {data.map((day) => {
-          const height = day.total > 0 ? Math.max(9, (day.total / max) * 100) : 3;
-          return (
-            <div className="sales-chart__column" key={day.date}>
-              <div className="sales-chart__bar-wrap">
-                <div
-                  className={`sales-chart__bar${day.total > 0 ? "" : " sales-chart__bar--empty"}`}
-                  style={{ height: `${height}%` }}
-                  title={`${formatDayShort(day.date)}: ${formatMoney(day.total)} (${day.count} transaksi)`}
-                >
-                  <span className="sales-chart__tooltip">{formatMoneyCompact(day.total)}</span>
-                </div>
-              </div>
-              <span className="sales-chart__label">{formatDayShort(day.date)}</span>
-            </div>
-          );
-        })}
+      <div className="sales-chart">
+        <svg
+          className="sales-chart__svg"
+          viewBox={`0 0 ${width} ${height}`}
+          role="img"
+          aria-label="Grafik penjualan tujuh hari terakhir"
+        >
+          <defs>
+            <linearGradient id={gradientId} x1="0" y1="0" x2="0" y2="1">
+              <stop offset="0%" stopColor="var(--brand)" stopOpacity="0.24" />
+              <stop offset="100%" stopColor="var(--brand)" stopOpacity="0" />
+            </linearGradient>
+          </defs>
+
+          {gridLines.map((line) => (
+            <g key={line.y}>
+              <line
+                x1={padding.left}
+                x2={width - padding.right}
+                y1={line.y}
+                y2={line.y}
+                stroke="var(--line)"
+                strokeDasharray="2 8"
+              />
+              <text
+                x={width - padding.right}
+                y={Math.max(12, line.y - 7)}
+                textAnchor="end"
+                className="sales-chart__axis-label"
+              >
+                {formatMoneyCompact(line.value)}
+              </text>
+            </g>
+          ))}
+
+          <path d={areaPath} fill={`url(#${gradientId})`} />
+          <path
+            d={linePath}
+            fill="none"
+            stroke="var(--brand)"
+            strokeWidth="2.6"
+            strokeLinecap="round"
+            strokeLinejoin="round"
+          />
+
+          {points.map((point, index) => (
+            <circle
+              key={point.date}
+              cx={point.x}
+              cy={point.y}
+              r={index === points.length - 1 ? 4.6 : 3.2}
+              fill={index === points.length - 1 ? "var(--brand)" : "var(--surface)"}
+              stroke="var(--brand)"
+              strokeWidth="2"
+            >
+              <title>
+                {formatDayShort(point.date)}: {formatMoney(point.total)} ({point.count} transaksi)
+              </title>
+            </circle>
+          ))}
+
+          {points.map((point) => (
+            <text
+              key={`label-${point.date}`}
+              x={point.x}
+              y={height - 7}
+              textAnchor="middle"
+              className="sales-chart__day-label"
+            >
+              {formatDayShort(point.date)}
+            </text>
+          ))}
+        </svg>
       </div>
     </section>
   );
@@ -127,6 +204,7 @@ export function OwnerDashboardPage() {
   if (!data) return null;
 
   const firstName = user?.name.split(" ")[0] || "Pemilik";
+  const maxTopRevenue = Math.max(...data.topProducts.map((product) => product.revenue), 1);
   const todayLabel = new Intl.DateTimeFormat("id-ID", {
     weekday: "long",
     day: "numeric",
@@ -318,12 +396,17 @@ export function OwnerDashboardPage() {
                     {index + 1}
                   </span>
                   <div className="ranked-item__info">
-                    <strong>{product.productName}</strong>
-                    <span>
+                    <div className="ranked-item__row">
+                      <strong>{product.productName}</strong>
+                      <span className="ranked-item__value">{formatMoneyCompact(product.revenue)}</span>
+                    </div>
+                    <span className="ranked-item__meta">
                       {formatQuantity(product.quantity)} {product.unit} terjual
                     </span>
+                    <span className="ranked-item__track" aria-hidden="true">
+                      <span style={{ width: `${Math.max(6, (product.revenue / maxTopRevenue) * 100)}%` }} />
+                    </span>
                   </div>
-                  <span className="ranked-item__value">{formatMoneyCompact(product.revenue)}</span>
                 </div>
               ))}
             </div>

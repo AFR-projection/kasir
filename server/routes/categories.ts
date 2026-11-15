@@ -9,12 +9,15 @@ import { parseId, trimmedString } from "../lib/validation";
 
 export const categoriesRouter = Router();
 
+// product_count mencakup produk yang diarsipkan karena foreign key tetap
+// menahan penghapusan kategori. active_product_count hanya menghitung produk
+// aktif yang belum dihapus agar sesuai dengan daftar produk di klien.
 const categorySelect = `
   SELECT c.id, c.name, c.created_at, c.updated_at,
          COUNT(p.id)::int AS product_count,
-         COUNT(p.id) FILTER (WHERE p.is_active = TRUE)::int AS active_product_count
+         COUNT(p.id) FILTER (WHERE p.is_active = TRUE AND p.deleted_at IS NULL)::int AS active_product_count
   FROM categories c
-  LEFT JOIN products p ON p.category_id = c.id AND p.deleted_at IS NULL
+  LEFT JOIN products p ON p.category_id = c.id
 `;
 
 categoriesRouter.get(
@@ -66,7 +69,7 @@ categoriesRouter.patch(
          RETURNING id, name, created_at, updated_at
        )
        SELECT u.id, u.name, u.created_at, u.updated_at,
-              (SELECT COUNT(*)::int FROM products p WHERE p.category_id = u.id AND p.deleted_at IS NULL) AS product_count,
+              (SELECT COUNT(*)::int FROM products p WHERE p.category_id = u.id) AS product_count,
               (SELECT COUNT(*)::int FROM products p WHERE p.category_id = u.id AND p.deleted_at IS NULL AND p.is_active = TRUE) AS active_product_count
        FROM updated u`,
       [body.name, id],
@@ -91,7 +94,10 @@ categoriesRouter.delete(
     );
 
     if (used.rows[0].count > 0) {
-      throw new AppError(409, "Kategori masih digunakan oleh produk. Pindahkan atau hapus produk terlebih dahulu.");
+      throw new AppError(
+        409,
+        "Kategori masih digunakan oleh produk, termasuk produk yang sudah diarsipkan. Pindahkan atau hapus produk terlebih dahulu.",
+      );
     }
 
     const result = await pool.query("DELETE FROM categories WHERE id = $1 RETURNING id", [id]);

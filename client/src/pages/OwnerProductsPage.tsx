@@ -1,9 +1,9 @@
 import { FormEvent, useEffect, useId, useRef, useState } from "react";
+import { Link } from "react-router-dom";
 import { useQuery, useQueryClient } from "@tanstack/react-query";
 import {
   Boxes,
   Camera,
-  CirclePlus,
   FolderCog,
   Loader2,
   PackageOpen,
@@ -222,68 +222,83 @@ export function OwnerProductsPage() {
             <div className="product-admin-grid">
               {productQuery.data?.items.map((product) => (
                 <article className={classNames("product-admin-card", !product.isActive && "product-admin-card--inactive")} key={product.id}>
-                  <div className="product-admin-card__top">
-                    <ProductImage src={product.imageUrl} name={product.name} size="lg" />
+                  <ProductImage
+                    src={product.imageUrl}
+                    name={product.name}
+                    size="lg"
+                    className="product-admin-card__image"
+                  />
+
+                  <div className="product-admin-card__content">
                     <div className="product-admin-card__heading">
-                      <div className="product-admin-card__badges">
-                        <Badge tone="blue">{product.categoryName}</Badge>
+                      <div className="product-admin-card__title">
+                        <h2>{product.name}</h2>
                         <Badge tone={product.isActive ? "green" : "gray"} dot>
                           {product.isActive ? "Aktif" : "Nonaktif"}
                         </Badge>
                       </div>
-                      <h2>{product.name}</h2>
-                      <span className="product-admin-card__unit">{product.unit}</span>
+                      <p className="product-admin-card__meta">
+                        {product.categoryName}
+                        <span aria-hidden="true">·</span>
+                        per {product.unit}
+                      </p>
                     </div>
-                    <div className="product-admin-card__tools">
-                      <IconButton label={`Edit ${product.name}`} onClick={() => openEdit(product)}>
-                        <Pencil size={16} />
-                      </IconButton>
-                      <IconButton label={`Hapus ${product.name}`} tone="danger" onClick={() => setDeletingProduct(product)}>
-                        <Trash2 size={16} />
-                      </IconButton>
+
+                    <div className="product-admin-card__metrics">
+                      <div>
+                        <span>Harga modal</span>
+                        <strong>
+                          {new Intl.NumberFormat("id-ID", { style: "currency", currency: "IDR", maximumFractionDigits: 0 }).format(product.costPrice)}
+                        </strong>
+                      </div>
+                      <div>
+                        <span>Harga jual</span>
+                        <strong className="price-highlight">
+                          {new Intl.NumberFormat("id-ID", { style: "currency", currency: "IDR", maximumFractionDigits: 0 }).format(product.sellingPrice)}
+                        </strong>
+                      </div>
+                      <div>
+                        <span>Stok tersedia</span>
+                        <strong className={!product.lowStock ? "" : "stock-warning-text"}>
+                          {new Intl.NumberFormat("id-ID", { maximumFractionDigits: 3 }).format(product.stock)} {product.unit}
+                        </strong>
+                      </div>
+                    </div>
+
+                    <div className="product-admin-card__footer">
+                      <span className="low-stock-note">
+                        {product.lowStock ? (
+                          <>
+                            <Badge tone={product.stock === 0 ? "red" : "amber"} dot>
+                              {product.stock === 0 ? "Habis" : "Stok menipis"}
+                            </Badge>
+                            <span>Minimum {product.minStock} {product.unit}</span>
+                          </>
+                        ) : (
+                          <span>Minimum stok {product.minStock} {product.unit}</span>
+                        )}
+                      </span>
+                      <button
+                        type="button"
+                        role="switch"
+                        aria-checked={product.isActive}
+                        aria-label={product.isActive ? "Nonaktifkan produk" : "Aktifkan produk"}
+                        className={`switch${product.isActive ? " switch--on" : ""}`}
+                        onClick={() => void handleToggleStatus(product)}
+                        disabled={togglingId === product.id}
+                      >
+                        <span />
+                      </button>
                     </div>
                   </div>
 
-                  <div className="product-admin-card__metrics">
-                    <div>
-                      <span>Harga modal</span>
-                      <strong>{new Intl.NumberFormat("id-ID", { style: "currency", currency: "IDR", maximumFractionDigits: 0 }).format(product.costPrice)}</strong>
-                    </div>
-                    <div>
-                      <span>Harga jual</span>
-                      <strong className="price-highlight">{new Intl.NumberFormat("id-ID", { style: "currency", currency: "IDR", maximumFractionDigits: 0 }).format(product.sellingPrice)}</strong>
-                    </div>
-                    <div>
-                      <span>Stok tersedia</span>
-                      <strong className={!product.lowStock ? "" : "stock-warning-text"}>
-                        {new Intl.NumberFormat("id-ID", { maximumFractionDigits: 3 }).format(product.stock)} {product.unit}
-                        {product.lowStock && <CirclePlus size={13} className="inline-warning-icon" />}
-                      </strong>
-                    </div>
-                  </div>
-
-                  <div className="product-admin-card__footer">
-                    <span className="low-stock-note">
-                      {product.lowStock ? (
-                        <>
-                          <Badge tone={product.stock === 0 ? "red" : "amber"}>Stok menipis</Badge>
-                          <span>Minimum {product.minStock} {product.unit}</span>
-                        </>
-                      ) : (
-                        <span>Minimum stok {product.minStock} {product.unit}</span>
-                      )}
-                    </span>
-                    <button
-                      type="button"
-                      role="switch"
-                      aria-checked={product.isActive}
-                      aria-label={product.isActive ? "Nonaktifkan produk" : "Aktifkan produk"}
-                      className={`switch${product.isActive ? " switch--on" : ""}`}
-                      onClick={() => void handleToggleStatus(product)}
-                      disabled={togglingId === product.id}
-                    >
-                      <span />
-                    </button>
+                  <div className="product-admin-card__tools">
+                    <IconButton label={`Edit ${product.name}`} onClick={() => openEdit(product)}>
+                      <Pencil size={16} />
+                    </IconButton>
+                    <IconButton label={`Hapus ${product.name}`} tone="danger" onClick={() => setDeletingProduct(product)}>
+                      <Trash2 size={16} />
+                    </IconButton>
                   </div>
                 </article>
               ))}
@@ -635,7 +650,16 @@ function ProductFormModal({ open, initialProduct, categories, onClose, onSaved }
                 htmlFor="product-stock"
                 required={!initialProduct}
                 error={fieldErrors.stock}
-                hint={initialProduct ? "Ubah stok melalui menu Stok & Riwayat." : undefined}
+                hint={
+                  initialProduct ? (
+                    <>
+                      Stok dikunci agar riwayat tetap akurat.{" "}
+                      <Link className="field__hint-link" to={`/owner/stock?product=${initialProduct.id}`}>
+                        Sesuaikan stok
+                      </Link>
+                    </>
+                  ) : undefined
+                }
               >
                 <div className="input-suffix">
                   <input
@@ -835,7 +859,12 @@ function CategoryManagerModal({ open, categories, onClose, onChange }: CategoryM
                       </span>
                       <div>
                         <strong>{category.name}</strong>
-                        <span>{category.activeProductCount} produk aktif</span>
+                        <span>
+                          {category.activeProductCount} aktif
+                          {category.productCount - category.activeProductCount > 0
+                            ? ` · ${category.productCount - category.activeProductCount} arsip`
+                            : ""}
+                        </span>
                       </div>
                     </div>
                     <div className="category-item__actions">
@@ -855,7 +884,7 @@ function CategoryManagerModal({ open, categories, onClose, onChange }: CategoryM
                         disabled={category.productCount > 0}
                         title={
                           category.productCount > 0
-                            ? "Kategori masih digunakan produk dan tidak dapat dihapus."
+                            ? "Kategori masih digunakan produk (termasuk arsip) dan tidak dapat dihapus."
                             : "Hapus kategori"
                         }
                       >

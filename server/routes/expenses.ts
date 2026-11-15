@@ -178,17 +178,49 @@ expensesRouter.post(
           };
         }
 
-        // FOR SHARE membuat pencatatan pengeluaran menunggu proses tutup kas
-        // yang memakai FOR UPDATE, sehingga pengeluaran tidak bisa masuk ke
-        // sesi yang sedang ditutup.
-        const sessionResult = await client.query<{ id: string }>(
-          "SELECT id FROM cash_sessions WHERE status = 'open' FOR SHARE LIMIT 1",
+        // FOR UPDATE membuat pencatatan pengeluaran menunggu checkout/tutup kas
+        // yang sedang berjalan dan mencegah dua pengeluaran melewati saldo laci
+        // secara bersamaan.
+        const sessionResult = await client.query<{ id: string; opening_cash: number }>(
+          "SELECT id, opening_cash FROM cash_sessions WHERE status = 'open' FOR UPDATE LIMIT 1",
         );
         const session = sessionResult.rows[0];
         if (!session) {
           throw new AppError(409, "Kas belum dibuka. Buka kas sebelum mencatat pengeluaran.", {
             code: "CASH_SESSION_CLOSED",
           });
+        }
+
+        const drawerResult = await client.query<{
+          cash_sales: number;
+          total_expenses: number;
+        }>(
+          `SELECT
+             (SELECT COALESCE(SUM(total) FILTER (WHERE payment_method = 'cash'), 0)
+              FROM transactions WHERE cash_session_id = $1)::numeric AS cash_sales,
+             (SELECT COALESCE(SUM(amount), 0)
+              FROM cash_expenses WHERE cash_session_id = $1)::numeric AS total_expenses`,
+          [session.id],
+        );
+        const availableCash = roundMoney(
+          Number(session.opening_cash) +
+            Number(drawerResult.rows[0].cash_sales) -
+            Number(drawerResult.rows[0].total_expenses),
+        );
+        if (amount > availableCash) {
+          const formatted = new Intl.NumberFormat("id-ID", {
+            style: "currency",
+            currency: "IDR",
+            minimumFractionDigits: 0,
+          }).format(Math.max(0, availableCash));
+          throw new AppError(
+            409,
+            `Pengeluaran melebihi saldo kas laci. Saldo tersedia ${formatted}.`,
+            {
+              code: "CASH_EXPENSE_EXCEEDS_DRAWER",
+              details: { availableCash },
+            },
+          );
         }
 
         const insertResult = await client.query<{ id: string }>(

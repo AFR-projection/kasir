@@ -290,9 +290,20 @@ const cashExpensesSchema: Migration = {
   `,
 };
 
+const allowNegativeExpectedCash: Migration = {
+  name: "005_allow_negative_expected_cash",
+  sql: `
+    -- Pengeluaran kas dapat membuat estimasi uang laci negatif pada data lama.
+    -- Formulanya tetap benar; batas pengeluaran baru dijaga di API.
+    ALTER TABLE cash_sessions
+      DROP CONSTRAINT IF EXISTS cash_sessions_expected_cash_check;
+  `,
+};
+
 export const migrations: Migration[] = [
   initialSchema,
   cashSessionsSchema,
   priceNegotiationSchema,
   cashExpensesSchema,
+  allowNegativeExpectedCash,
 ];

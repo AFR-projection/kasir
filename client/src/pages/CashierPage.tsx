@@ -194,10 +194,11 @@ export function CashierPage() {
   const addToCart = (product: Product) => {
     if (product.stock <= 0 || !product.isActive) return;
     setCart((current) => {
+      const step = quantityStep(product.unit);
       const existing = current.find((line) => line.productId === product.id);
       if (existing) {
-        const nextQuantity = roundQuantityValue(existing.quantity + 1);
-        if (nextQuantity > product.stock) {
+        const nextQuantity = roundQuantityValue(Math.min(existing.quantity + step, product.stock));
+        if (nextQuantity <= existing.quantity) {
           toast.info(`Stok ${product.name} hanya tersisa ${formatQuantity(product.stock)} ${product.unit}.`);
           return current;
         }
@@ -205,7 +206,8 @@ export function CashierPage() {
           line.productId === product.id ? { ...line, quantity: nextQuantity } : line,
         );
       }
-      return [...current, { productId: product.id, quantity: 1 }];
+      const initialQuantity = roundQuantityValue(Math.min(step, product.stock));
+      return [...current, { productId: product.id, quantity: initialQuantity }];
     });
   };
 
