@@ -36,6 +36,7 @@ interface CashSessionRow {
   cash_sales: number;
   non_cash_sales: number;
   total_expenses: number;
+  held_cart_count: number;
 }
 
 export interface CashSessionDto {
@@ -56,6 +57,7 @@ export interface CashSessionDto {
   cashSales: number;
   nonCashSales: number;
   totalExpenses: number;
+  heldCartCount: number;
 }
 
 const sessionSelect = `
@@ -63,15 +65,21 @@ const sessionSelect = `
          cs.opening_notes, cs.closing_notes, cs.opened_by, ob.name AS opened_by_name,
          cs.closed_by, cb.name AS closed_by_name, cs.opened_at, cs.closed_at,
          (SELECT COUNT(*)::int
-            FROM transactions t WHERE t.cash_session_id = cs.id) AS transaction_count,
+            FROM transactions t
+            WHERE t.cash_session_id = cs.id AND t.status = 'completed') AS transaction_count,
          (SELECT COALESCE(SUM(t.total), 0)::numeric
-            FROM transactions t WHERE t.cash_session_id = cs.id) AS total_sales,
+            FROM transactions t
+            WHERE t.cash_session_id = cs.id AND t.status = 'completed') AS total_sales,
          (SELECT COALESCE(SUM(t.total) FILTER (WHERE t.payment_method = 'cash'), 0)::numeric
-            FROM transactions t WHERE t.cash_session_id = cs.id) AS cash_sales,
+            FROM transactions t
+            WHERE t.cash_session_id = cs.id AND t.status = 'completed') AS cash_sales,
          (SELECT COALESCE(SUM(t.total) FILTER (WHERE t.payment_method <> 'cash'), 0)::numeric
-            FROM transactions t WHERE t.cash_session_id = cs.id) AS non_cash_sales,
+            FROM transactions t
+            WHERE t.cash_session_id = cs.id AND t.status = 'completed') AS non_cash_sales,
          (SELECT COALESCE(SUM(e.amount), 0)::numeric
-            FROM cash_expenses e WHERE e.cash_session_id = cs.id) AS total_expenses
+            FROM cash_expenses e WHERE e.cash_session_id = cs.id) AS total_expenses,
+         (SELECT COUNT(*)::int
+            FROM held_carts h WHERE h.cash_session_id = cs.id) AS held_cart_count
   FROM cash_sessions cs
   JOIN users ob ON ob.id = cs.opened_by
   LEFT JOIN users cb ON cb.id = cs.closed_by
@@ -105,6 +113,7 @@ function mapCashSession(row: CashSessionRow): CashSessionDto {
     cashSales,
     nonCashSales: Number(row.non_cash_sales),
     totalExpenses,
+    heldCartCount: Number(row.held_cart_count),
   };
 }
 
@@ -266,11 +275,24 @@ cashSessionsRouter.post(
         throw new AppError(409, "Sesi kas ini sudah ditutup.", { code: "CASH_SESSION_ALREADY_CLOSED" });
       }
 
+      const heldResult = await client.query<{ count: number }>(
+        "SELECT COUNT(*)::int AS count FROM held_carts WHERE cash_session_id = $1",
+        [id],
+      );
+      const heldCartCount = Number(heldResult.rows[0].count);
+      if (heldCartCount > 0) {
+        throw new AppError(
+          409,
+          `Masih ada ${heldCartCount} keranjang ditahan pada sesi ini. Lanjutkan atau hapus keranjang tersebut sebelum menutup kas.`,
+          { code: "HELD_CARTS_REMAIN" },
+        );
+      }
+
       const salesResult = await client.query<{ cash_sales: number; total_sales: number }>(
         `SELECT COALESCE(SUM(total) FILTER (WHERE payment_method = 'cash'), 0)::numeric AS cash_sales,
                 COALESCE(SUM(total), 0)::numeric AS total_sales
          FROM transactions
-         WHERE cash_session_id = $1`,
+         WHERE cash_session_id = $1 AND status = 'completed'`,
         [id],
       );
       const expensesResult = await client.query<{ total_expenses: number }>(

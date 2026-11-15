@@ -26,6 +26,26 @@ export function Receipt({ transaction }: { transaction: TransactionDetail }) {
 
       <DashedLine />
 
+      {transaction.status === "voided" && (
+        <div className="receipt__void">
+          <strong>
+            {transaction.voidType === "return" ? "RETUR TRANSAKSI" : "TRANSAKSI DIBATALKAN"}
+          </strong>
+          <span>
+            {transaction.voidType === "return"
+              ? "Barang dikembalikan dan stok telah dipulihkan."
+              : "Transaksi dibatalkan dan stok telah dipulihkan."}
+          </span>
+          {transaction.voidedBy && (
+            <span>
+              Oleh {transaction.voidedBy.name}
+              {transaction.voidedAt && ` · ${formatDateTime(transaction.voidedAt)}`}
+            </span>
+          )}
+          {transaction.voidReason && <span>Alasan: {transaction.voidReason}</span>}
+        </div>
+      )}
+
       <div className="receipt__meta">
         <div>
           <span>No. Nota</span>

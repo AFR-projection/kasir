@@ -124,7 +124,7 @@ productStockRouter.post(
 
 const movementsQuerySchema = z.object({
   search: z.string().trim().max(100).optional(),
-  movementType: z.enum(["all", "in", "out", "adjustment", "sale"]).default("all"),
+  movementType: z.enum(["all", "in", "out", "adjustment", "sale", "void"]).default("all"),
   productId: uuidSchema.optional(),
   dateFrom: dateInputSchema.optional(),
   dateTo: dateInputSchema.optional(),

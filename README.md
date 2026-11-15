@@ -20,6 +20,9 @@ Semua data disimpan di **Neon PostgreSQL**. Tidak ada data dummy atau penyimpana
 - Checkout atomik: penguncian baris produk, pengurangan stok, nomor invoice berurutan, dan snapshot harga/nama produk.
 - **Nego harga fleksibel**: kasir dapat menawar harga per satuan atau langsung menetapkan total item (misalnya apel Rp10.000 menjadi Rp8.000 karena barang kurang segar). Kedua cara tetap dibatasi harga normal dan harga modal, lalu dicatat terpisah di struk.
 - **Pembulatan timbangan buah**: produk kg/gram dengan harga normal dibulatkan otomatis sesuai setelan toko (tanpa pembulatan, Rp100, Rp500, atau Rp1.000 terdekat). Selisih dicatat per item dan ditampilkan di struk. Harga nego tetap presisi agar tidak melebihi kesepakatan.
+- **Beberapa baris untuk produk yang sama**: satu produk bisa masuk keranjang lebih dari sekali dengan jumlah dan nego berbeda. Stok tetap divalidasi dan dikurangi sekali per produk, sedangkan struk dan laporan menyimpan setiap baris sesuai urutan input.
+- **Keranjang ditahan (hold cart)**: kasir dapat memarkir keranjang beserta jumlah dan nego, melayani pelanggan lain, lalu melanjutkannya selama sesi kas masih terbuka. Maksimal 20 keranjang ditahan per sesi, dan kas tidak bisa ditutup sebelum semuanya dilanjutkan atau dihapus.
+- **Pembatalan & retur transaksi**: owner dapat membatalkan transaksi atau mencatat retur selama sesi kas transaksi masih terbuka. Stok dikembalikan, alasan wajib diisi, pelaku dan waktu disimpan untuk audit, dan transaksi tidak lagi dihitung dalam laporan penjualan maupun rekap kas.
 - Checkout diblokir selama kas belum dibuka atau sudah ditutup.
 - Idempotensi checkout melalui `clientReference` untuk mencegah transaksi ganda.
 - Real-time sync dengan SSE pada server biasa, dan polling otomatis pada Vercel/serverless.
@@ -159,6 +162,8 @@ Setelah owner dibuat, halaman setup tidak dapat dijalankan lagi. Akun kasir dibu
 | Membuka & menutup sesi kas | Tidak | Ya |
 | Melihat riwayat semua sesi kas | Ya | Tidak |
 | Melakukan checkout | Tidak | Ya |
+| Menahan & melanjutkan keranjang | Tidak | Ya |
+| Membatalkan atau meretur transaksi | Ya | Tidak |
 | Melihat semua transaksi | Ya | Tidak |
 | Melihat riwayat transaksi sendiri | Ya | Ya |
 | Mengelola akun pegawai | Ya | Tidak |
@@ -191,15 +196,19 @@ Semua transaksi otomatis terhubung ke sesi kas aktif (`transactions.cash_session
 
 - Kas awal
 - Penjualan tunai
+- Pengeluaran kas
 - Estimasi uang laci
+- Jumlah keranjang ditahan
 
 **Rumus uang laci seharusnya:**
 
 ```text
-Uang laci seharusnya = kas awal + seluruh penjualan tunai
+Uang laci seharusnya = kas awal + penjualan tunai − pengeluaran kas
 ```
 
-Penjualan QRIS, debit, dan transfer tetap tercatat sebagai transaksi, tetapi **tidak** menambah uang tunai di laci.
+Penjualan QRIS, debit, dan transfer tetap tercatat sebagai transaksi, tetapi **tidak** menambah uang tunai di laci. Transaksi yang sudah dibatalkan atau diretur juga tidak dihitung.
+
+Selama sesi berjalan, kasir dapat menahan keranjang. Kasir tidak dapat menutup kas selama masih ada keranjang ditahan; server menolak dengan kode `HELD_CARTS_REMAIN` sampai keranjang tersebut dilanjutkan atau dihapus.
 
 ### 3. Tutup kas
 
@@ -222,8 +231,9 @@ Contoh:
 | --- | ---: |
 | Kas awal | Rp200.000 |
 | Penjualan tunai | Rp30.000 |
-| Uang laci seharusnya | Rp230.000 |
-| Uang hasil hitung | Rp225.000 |
+| Pengeluaran kas | −Rp10.000 |
+| Uang laci seharusnya | Rp220.000 |
+| Uang hasil hitung | Rp215.000 |
 | **Selisih** | **−Rp5.000** |
 | Catatan | Wajib, misalnya "salah kembalian" |
 
@@ -495,6 +505,10 @@ Semua endpoint berada di bawah `/api`. Endpoint selain setup dan login memerluka
 | `/api/cash-sessions/:id/close` | Kasir | Menutup sesi dengan uang hitung dan catatan selisih. |
 | `/api/cash-sessions` | Owner | Riwayat dan ringkasan seluruh sesi kas. |
 | `/api/transactions` | Owner/Kasir | Checkout khusus kasir; owner melihat semua, kasir hanya miliknya. |
+| `/api/transactions/:id/void` | Owner | Membatalkan atau meretur transaksi beserta pengembalian stok; alasan wajib. |
+| `/api/held-carts` | Kasir | Membuat dan mendaftar keranjang ditahan pada sesi kas aktif. |
+| `/api/held-carts/:id/resume` | Kasir | Mengambil keranjang ditahan secara atomik dan menghapus hold. |
+| `/api/held-carts/:id` | Kasir | Menghapus keranjang ditahan tanpa melanjutkannya. |
 | `/api/dashboard` | Owner | Ringkasan penjualan dan stok. |
 | `/api/users` | Owner | Pengelolaan akun pegawai. |
 | `/api/settings` | Owner/Kasir | Kasir membaca identitas toko; perubahan khusus owner. |
@@ -551,6 +565,27 @@ Kas belum dibuka atau sudah ditutup. Minta kasir membuka sesi kas terlebih dahul
 
 **Tutup kas ditolak `CASH_DIFFERENCE_NOTE_REQUIRED`**
 Uang hitung laci berbeda dari perhitungan sistem. Isi catatan penjelasan sebelum menutup kas.
+
+**Tutup kas ditolak `HELD_CARTS_REMAIN`**
+Masih ada keranjang ditahan pada sesi aktif. Buka daftar **Keranjang Ditahan** dari halaman kasir, lalu lanjutkan atau hapus semua keranjang sebelum menutup kas.
+
+**Hold cart ditolak `TOO_MANY_HELD_CARTS`**
+Satu sesi kas maksimal menyimpan 20 keranjang ditahan. Lanjutkan atau hapus salah satu keranjang terlebih dahulu.
+
+**Hold cart tidak bisa dilanjutkan (`HELD_CART_SESSION_CLOSED`)**
+Keranjang tersebut dibuat pada sesi kas yang sudah ditutup. Hold cart terikat pada sesi kasnya dan tidak dapat dipindahkan ke sesi berikutnya; buat ulang keranjang pada sesi yang sedang aktif.
+
+**Void/retur ditolak `CASH_SESSION_CLOSED`**
+Transaksi hanya dapat dibatalkan atau diretur selama sesi kas tempat transaksi itu dibuat masih terbuka. Tutup kas tidak menghapus transaksi; transaksi lama tetap dapat dilihat di riwayat.
+
+**Void/retur ditolak `CASH_SESSION_MISSING`**
+Transaksi lama tidak memiliki `cash_session_id` (data sebelum fitur sesi kas). Transaksi seperti ini tidak dapat dibatalkan lewat aplikasi; catat koreksi secara manual sesuai prosedur toko.
+
+**Void/retur ditolak `TRANSACTION_ALREADY_VOIDED`**
+Transaksi sudah pernah dibatalkan atau diretur. Muat ulang daftar transaksi untuk melihat status terbarunya.
+
+**Stok atau uang laci tidak berubah setelah void/retur**
+Pastikan permintaan berhasil (status `200`) dan halaman transaksi sudah dimuat ulang. Void mengembalikan stok dan mengurangi penjualan tunai pada sesi yang sama; transaksi void tidak dihitung pada laporan maupun rekap kas.
 
 **Migrasi gagal saat cold start Vercel**
 Periksa connection string Neon, izin database, dan log fungsi. Untuk kontrol penuh, jalankan `npm run db:migrate` manual lalu set `RUN_MIGRATIONS_ON_START=false`.

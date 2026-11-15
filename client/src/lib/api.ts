@@ -14,13 +14,17 @@ import type {
   CheckoutResponse,
   CloseCashSessionInput,
   CreateCashExpenseInput,
+  CreateHeldCartInput,
   CreateProductInput,
   DashboardData,
+  HeldCart,
+  HeldCartListResponse,
   Product,
   ProductInput,
   ProductListResponse,
   ProductQuery,
   OpenCashSessionInput,
+  ResumeHeldCartResponse,
   SessionUser,
   SetupStatus,
   StockAdjustmentResponse,
@@ -32,6 +36,7 @@ import type {
   TransactionListResponse,
   TransactionQuery,
   UserInput,
+  VoidTransactionInput,
 } from "../types";
 
 export class ApiError extends Error {
@@ -191,6 +196,23 @@ export const api = {
     get: (id: string) => request<{ transaction: TransactionDetail }>(`/transactions/${id}`),
     checkout: (input: CheckoutInput) =>
       request<CheckoutResponse>("/transactions", { method: "POST", body: input }),
+    voidTransaction: (id: string, input: VoidTransactionInput) =>
+      request<{ transaction: TransactionDetail; message: string }>(`/transactions/${id}/void`, {
+        method: "POST",
+        body: input,
+      }),
+  },
+  heldCarts: {
+    list: () => request<HeldCartListResponse>("/held-carts"),
+    create: (input: CreateHeldCartInput) =>
+      request<{ heldCart: HeldCart; message: string }>("/held-carts", {
+        method: "POST",
+        body: input,
+      }),
+    resume: (id: string) =>
+      request<ResumeHeldCartResponse>(`/held-carts/${id}/resume`, { method: "POST" }),
+    remove: (id: string) =>
+      request<{ message: string }>(`/held-carts/${id}`, { method: "DELETE" }),
   },
   cashSessions: {
     current: () => request<CashSessionCurrentResponse>("/cash-sessions/current"),

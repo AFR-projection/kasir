@@ -61,7 +61,8 @@ dashboardRouter.get(
                    = date_trunc('month', NOW() AT TIME ZONE $1)
              ), 0)::numeric AS month_sales,
              COUNT(*)::int AS total_transactions
-           FROM transactions t`,
+           FROM transactions t
+           WHERE t.status = 'completed'`,
           [timezone],
         ),
         pool.query<ProductStatsRow>(
@@ -85,7 +86,9 @@ dashboardRouter.get(
                   COALESCE(SUM(t.total), 0)::numeric AS total,
                   COUNT(t.id)::int AS count
            FROM days d
-           LEFT JOIN transactions t ON (t.created_at AT TIME ZONE $1)::date = d.day
+           LEFT JOIN transactions t
+             ON (t.created_at AT TIME ZONE $1)::date = d.day
+            AND t.status = 'completed'
            GROUP BY d.day
            ORDER BY d.day ASC`,
           [timezone],
@@ -103,9 +106,15 @@ dashboardRouter.get(
         pool.query<TransactionSummaryRow>(
           `SELECT t.id, t.invoice_number, t.cashier_id, u.name AS cashier_name,
                   t.total, t.discount_total, t.rounding_total, t.payment_method, t.created_at,
+                  t.status, t.void_type, t.void_reason, t.voided_at,
+                  vu.id AS voided_by_id, vu.name AS voided_by_name,
+                  (t.status = 'completed' AND cs.status = 'open') AS can_void,
                   (SELECT COUNT(*)::int FROM transaction_items ti WHERE ti.transaction_id = t.id) AS item_count
            FROM transactions t
            JOIN users u ON u.id = t.cashier_id
+           LEFT JOIN users vu ON vu.id = t.voided_by
+           LEFT JOIN cash_sessions cs ON cs.id = t.cash_session_id
+           WHERE t.status = 'completed'
            ORDER BY t.created_at DESC
            LIMIT 6`,
         ),
@@ -117,6 +126,7 @@ dashboardRouter.get(
            JOIN transactions t ON t.id = ti.transaction_id
            WHERE date_trunc('month', t.created_at AT TIME ZONE $1)
                = date_trunc('month', NOW() AT TIME ZONE $1)
+             AND t.status = 'completed'
            GROUP BY ti.product_id, ti.product_name, ti.unit
            ORDER BY revenue DESC
            LIMIT 5`,

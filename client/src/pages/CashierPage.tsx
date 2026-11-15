@@ -5,10 +5,15 @@ import {
   BadgePercent,
   Banknote,
   ChevronDown,
+  CircleAlert,
+  CirclePause,
+  ClipboardList,
+  CopyPlus,
   CreditCard,
   Minus,
   PackageSearch,
   Pencil,
+  Play,
   Plus,
   QrCode,
   RotateCcw,
@@ -24,6 +29,7 @@ import { api } from "../lib/api";
 import type {
   CashSession,
   CashSessionCurrentResponse,
+  HeldCart,
   PaymentMethod,
   Product,
   TransactionDetail,
@@ -31,6 +37,7 @@ import type {
 import { useDebouncedValue } from "../lib/hooks";
 import {
   createClientReference,
+  formatDateTime,
   formatMoney,
   formatMoneyCompact,
   formatQuantity,
@@ -62,6 +69,7 @@ import { CashSessionBar, CloseCashSessionModal, OpenCashSessionGate } from "../c
 import { CashExpensesModal } from "../components/CashExpenses";
 
 interface CartLine {
+  lineId: string;
   productId: string;
   quantity: number;
   negotiatedPrice?: number;
@@ -69,6 +77,7 @@ interface CartLine {
 }
 
 interface CartView {
+  lineId: string;
   productId: string;
   quantity: number;
   product?: Product;
@@ -80,6 +89,22 @@ interface CartView {
   discountAmount: number;
   negotiated: boolean;
   negotiationMode: "unit" | "total" | null;
+}
+
+function createLineId(): string {
+  if (typeof crypto !== "undefined" && "randomUUID" in crypto) {
+    return crypto.randomUUID();
+  }
+  return `line-${Date.now()}-${Math.random().toString(36).slice(2, 10)}`;
+}
+
+function cartToCheckoutItems(cart: CartView[]) {
+  return cart.map((line) => ({
+    productId: line.productId,
+    quantity: line.quantity,
+    unitPrice: line.negotiationMode === "unit" ? line.unitPrice : undefined,
+    negotiatedTotal: line.negotiationMode === "total" ? line.lineTotal : undefined,
+  }));
 }
 
 const paymentOptions: Array<{
@@ -106,7 +131,13 @@ export function CashierPage() {
   const [clearConfirmOpen, setClearConfirmOpen] = useState(false);
   const [closeSessionOpen, setCloseSessionOpen] = useState(false);
   const [expensesOpen, setExpensesOpen] = useState(false);
-  const [negotiatingProductId, setNegotiatingProductId] = useState<string | null>(null);
+  const [holdCartOpen, setHoldCartOpen] = useState(false);
+  const [heldCartsOpen, setHeldCartsOpen] = useState(false);
+  const [resumeTarget, setResumeTarget] = useState<HeldCart | null>(null);
+  const [deleteTarget, setDeleteTarget] = useState<HeldCart | null>(null);
+  const [resumingHoldId, setResumingHoldId] = useState<string | null>(null);
+  const [deletingHoldId, setDeletingHoldId] = useState<string | null>(null);
+  const [negotiatingLineId, setNegotiatingLineId] = useState<string | null>(null);
   const [receipt, setReceipt] = useState<TransactionDetail | null>(null);
 
   const sessionQuery = useQuery({
@@ -126,6 +157,13 @@ export function CashierPage() {
     queryFn: api.categories.list,
     enabled: Boolean(activeSession),
   });
+  const heldCartsQuery = useQuery({
+    queryKey: ["held-carts"],
+    queryFn: api.heldCarts.list,
+    enabled: Boolean(activeSession),
+    staleTime: 0,
+  });
+  const heldCarts = heldCartsQuery.data?.items ?? [];
 
   useEffect(() => {
     if (sessionQuery.data && !sessionQuery.data.session) {
@@ -133,7 +171,11 @@ export function CashierPage() {
       setPaymentOpen(false);
       setCartOpen(false);
       setExpensesOpen(false);
-      setNegotiatingProductId(null);
+      setHoldCartOpen(false);
+      setHeldCartsOpen(false);
+      setResumeTarget(null);
+      setDeleteTarget(null);
+      setNegotiatingLineId(null);
     }
   }, [sessionQuery.data]);
 
@@ -155,6 +197,7 @@ export function CashierPage() {
         const product = productsById.get(line.productId);
         if (!product) {
           return {
+            lineId: line.lineId,
             productId: line.productId,
             quantity: line.quantity,
             listUnitPrice: 0,
@@ -200,6 +243,7 @@ export function CashierPage() {
         }
 
         return {
+          lineId: line.lineId,
           productId: line.productId,
           quantity: line.quantity,
           product,
@@ -221,70 +265,132 @@ export function CashierPage() {
   const roundingTotal = roundMoneyValue(cartView.reduce((sum, item) => sum + item.roundingAmount, 0));
   const total = roundMoneyValue(subtotal - discountTotal + roundingTotal);
   const totalQuantity = roundQuantityValue(cartView.reduce((sum, item) => sum + item.quantity, 0));
+  const cartQuantityByProduct = useMemo(() => {
+    const quantities = new Map<string, number>();
+    for (const line of cartView) {
+      quantities.set(
+        line.productId,
+        roundQuantityValue((quantities.get(line.productId) ?? 0) + line.quantity),
+      );
+    }
+    return quantities;
+  }, [cartView]);
   const negotiatingLine =
-    cartView.find((line) => line.productId === negotiatingProductId) ?? null;
-  const hasInvalidLine = cartView.some(
-    (line) => !line.product || !line.product.isActive || line.quantity <= 0 || line.quantity > line.product.stock,
-  );
+    cartView.find((line) => line.lineId === negotiatingLineId) ?? null;
+  const hasInvalidLine =
+    cartView.some((line) => !line.product || !line.product.isActive || line.quantity <= 0) ||
+    Array.from(cartQuantityByProduct.entries()).some(([productId, quantity]) => {
+      const product = productsById.get(productId);
+      return !product || quantity > product.stock;
+    });
   const cartLineCount = cartView.length;
 
   const addToCart = (product: Product) => {
     if (product.stock <= 0 || !product.isActive) return;
     setCart((current) => {
       const step = quantityStep(product.unit);
-      const existing = current.find((line) => line.productId === product.id);
-      if (existing) {
-        const nextQuantity = roundQuantityValue(Math.min(existing.quantity + step, product.stock));
-        if (nextQuantity <= existing.quantity) {
+      const lines = current.filter((line) => line.productId === product.id);
+      const aggregate = roundQuantityValue(
+        lines.reduce((sum, line) => sum + line.quantity, 0),
+      );
+      if (aggregate >= product.stock) {
+        toast.info(`Stok ${product.name} hanya tersisa ${formatQuantity(product.stock)} ${product.unit}.`);
+        return current;
+      }
+
+      const target = lines[lines.length - 1];
+      if (target) {
+        const remainingForTarget = roundQuantityValue(product.stock - (aggregate - target.quantity));
+        const nextQuantity = roundQuantityValue(Math.min(target.quantity + step, remainingForTarget));
+        if (nextQuantity <= target.quantity) {
           toast.info(`Stok ${product.name} hanya tersisa ${formatQuantity(product.stock)} ${product.unit}.`);
           return current;
         }
-        if (existing.negotiatedTotal !== undefined) {
+        if (target.negotiatedTotal !== undefined) {
           toast.info(`Nego total ${product.name} direset karena jumlah berubah.`);
         }
         return current.map((line) =>
-          line.productId === product.id
+          line.lineId === target.lineId
             ? { ...line, quantity: nextQuantity, negotiatedTotal: undefined }
             : line,
         );
       }
+
       const initialQuantity = roundQuantityValue(Math.min(step, product.stock));
-      return [...current, { productId: product.id, quantity: initialQuantity }];
+      return [
+        ...current,
+        { lineId: createLineId(), productId: product.id, quantity: initialQuantity },
+      ];
     });
   };
 
-  const updateQuantity = (productId: string, quantity: number) => {
-    const product = productsById.get(productId);
-    if (!product) return;
-    const sanitized = roundQuantityValue(quantity);
-    if (sanitized <= 0) return;
-    if (sanitized > product.stock) {
-      toast.info(`Stok ${product.name} hanya tersisa ${formatQuantity(product.stock)} ${product.unit}.`);
-    }
-    const existing = cart.find((line) => line.productId === productId);
-    if (existing?.negotiatedTotal !== undefined && sanitized !== existing.quantity) {
-      toast.info(`Nego total ${product.name} direset karena jumlah berubah.`);
-    }
-    setCart((current) =>
-      current.map((line) =>
-        line.productId === productId
+  const addNewLine = (product: Product) => {
+    if (product.stock <= 0 || !product.isActive) return;
+    setCart((current) => {
+      const step = quantityStep(product.unit);
+      const aggregate = roundQuantityValue(
+        current
+          .filter((line) => line.productId === product.id)
+          .reduce((sum, line) => sum + line.quantity, 0),
+      );
+      const remaining = roundQuantityValue(product.stock - aggregate);
+      if (remaining <= 0) {
+        toast.info(`Stok ${product.name} sudah seluruhnya masuk keranjang.`);
+        return current;
+      }
+      const initialQuantity = roundQuantityValue(Math.min(step, remaining));
+      toast.info(`Baris terpisah untuk ${product.name} ditambahkan.`);
+      return [
+        ...current,
+        { lineId: createLineId(), productId: product.id, quantity: initialQuantity },
+      ];
+    });
+  };
+
+  const updateQuantity = (lineId: string, quantity: number) => {
+    setCart((current) => {
+      const line = current.find((item) => item.lineId === lineId);
+      if (!line) return current;
+      const product = productsById.get(line.productId);
+      if (!product) return current;
+
+      const sanitized = roundQuantityValue(quantity);
+      if (sanitized <= 0) return current;
+
+      const otherQuantity = roundQuantityValue(
+        current
+          .filter((item) => item.productId === line.productId && item.lineId !== lineId)
+          .reduce((sum, item) => sum + item.quantity, 0),
+      );
+      if (sanitized + otherQuantity > product.stock) {
+        toast.info(
+          `Total ${product.name} di keranjang melebihi stok ${formatQuantity(product.stock)} ${product.unit}.`,
+        );
+      }
+      if (line.negotiatedTotal !== undefined && sanitized !== line.quantity) {
+        toast.info(`Nego total ${product.name} direset karena jumlah berubah.`);
+      }
+
+      return current.map((item) =>
+        item.lineId === lineId
           ? {
-              ...line,
+              ...item,
               quantity: sanitized,
-              negotiatedTotal: sanitized === line.quantity ? line.negotiatedTotal : undefined,
+              negotiatedTotal:
+                sanitized === item.quantity ? item.negotiatedTotal : undefined,
             }
-          : line,
-      ),
-    );
+          : item,
+      );
+    });
   };
 
   const setLineNegotiation = (
-    productId: string,
+    lineId: string,
     negotiation: { mode: "unit" | "total"; value: number } | null,
   ) => {
     setCart((current) =>
       current.map((line) => {
-        if (line.productId !== productId) return line;
+        if (line.lineId !== lineId) return line;
         if (!negotiation) {
           return { ...line, negotiatedPrice: undefined, negotiatedTotal: undefined };
         }
@@ -304,28 +410,95 @@ export function CashierPage() {
     );
   };
 
-  const changeQuantity = (productId: string, direction: 1 | -1) => {
-    const line = cart.find((item) => item.productId === productId);
-    const product = productsById.get(productId);
-    if (!line || !product) return;
+  const changeQuantity = (lineId: string, direction: 1 | -1) => {
+    const line = cart.find((item) => item.lineId === lineId);
+    if (!line) return;
+    const product = productsById.get(line.productId);
+    if (!product) return;
     const step = quantityStep(product.unit);
     const nextQuantity = roundQuantityValue(line.quantity + step * direction);
     if (nextQuantity <= 0) {
-      removeLine(productId);
+      removeLine(lineId);
       return;
     }
-    updateQuantity(productId, nextQuantity);
+    updateQuantity(lineId, nextQuantity);
   };
 
-  const removeLine = (productId: string) => {
-    setCart((current) => current.filter((line) => line.productId !== productId));
+  const removeLine = (lineId: string) => {
+    setCart((current) => current.filter((line) => line.lineId !== lineId));
+  };
+
+  const handleHoldSaved = (message: string) => {
+    setCart([]);
+    setHoldCartOpen(false);
+    setNegotiatingLineId(null);
+    toast.success(message);
+    void queryClient.invalidateQueries({ queryKey: ["held-carts"] });
+    void queryClient.invalidateQueries({ queryKey: ["cash-session"] });
+  };
+
+  const applyHeldCart = (
+    items: Array<{
+      productId: string;
+      quantity: number;
+      unitPrice?: number;
+      negotiatedTotal?: number;
+    }>,
+  ) => {
+    setCart(
+      items.map((item) => ({
+        lineId: createLineId(),
+        productId: item.productId,
+        quantity: item.quantity,
+        negotiatedPrice: item.unitPrice ?? undefined,
+        negotiatedTotal: item.negotiatedTotal ?? undefined,
+      })),
+    );
+    setPaymentOpen(false);
+    setNegotiatingLineId(null);
+    setHeldCartsOpen(false);
+    setResumeTarget(null);
+    setCartOpen(true);
+    void queryClient.invalidateQueries({ queryKey: ["held-carts"] });
+    void queryClient.invalidateQueries({ queryKey: ["cash-session"] });
+  };
+
+  const handleResumeHold = async (hold: HeldCart) => {
+    setResumingHoldId(hold.id);
+    try {
+      const result = await api.heldCarts.resume(hold.id);
+      applyHeldCart(result.items);
+      toast.success(result.message);
+    } catch (error) {
+      toast.error(getErrorMessage(error));
+      void queryClient.invalidateQueries({ queryKey: ["held-carts"] });
+      void queryClient.invalidateQueries({ queryKey: ["cash-session"] });
+    } finally {
+      setResumingHoldId(null);
+      setResumeTarget(null);
+    }
+  };
+
+  const handleDeleteHold = async (hold: HeldCart) => {
+    setDeletingHoldId(hold.id);
+    try {
+      const result = await api.heldCarts.remove(hold.id);
+      toast.success(result.message);
+      void queryClient.invalidateQueries({ queryKey: ["held-carts"] });
+      void queryClient.invalidateQueries({ queryKey: ["cash-session"] });
+    } catch (error) {
+      toast.error(getErrorMessage(error));
+    } finally {
+      setDeletingHoldId(null);
+      setDeleteTarget(null);
+    }
   };
 
   const handlePaymentSuccess = async (transaction: TransactionDetail) => {
     setCart([]);
     setPaymentOpen(false);
     setCartOpen(false);
-    setNegotiatingProductId(null);
+    setNegotiatingLineId(null);
     setReceipt(transaction);
     toast.success(`Pembayaran ${transaction.invoiceNumber} berhasil.`);
     void queryClient.invalidateQueries({ queryKey: ["cash-session"] });
@@ -346,7 +519,11 @@ export function CashierPage() {
     setPaymentOpen(false);
     setCartOpen(false);
     setExpensesOpen(false);
-    setNegotiatingProductId(null);
+    setHoldCartOpen(false);
+    setHeldCartsOpen(false);
+    setResumeTarget(null);
+    setDeleteTarget(null);
+    setNegotiatingLineId(null);
     setReceipt(null);
     queryClient.setQueryData<CashSessionCurrentResponse>(["cash-session", "current"], {
       session: null,
@@ -354,6 +531,7 @@ export function CashierPage() {
     });
     void queryClient.invalidateQueries({ queryKey: ["transactions"] });
     void queryClient.invalidateQueries({ queryKey: ["dashboard"] });
+    void queryClient.invalidateQueries({ queryKey: ["held-carts"] });
   };
 
   const relevantCategories = categoriesQuery.data?.categories || [];
@@ -423,9 +601,20 @@ export function CashierPage() {
               {products.length} produk aktif · {visibleStock} tersedia
             </p>
           </div>
-          <div className="pos-heading__badge">
-            <ShoppingBasket size={18} />
-            <span>{cartLineCount} produk di keranjang</span>
+          <div className="pos-heading__actions">
+            <div className="pos-heading__badge">
+              <ShoppingBasket size={18} />
+              <span>{cartLineCount} baris di keranjang</span>
+            </div>
+            <button
+              type="button"
+              className={`pos-hold-button${heldCarts.length > 0 ? " pos-hold-button--active" : ""}`}
+              onClick={() => setHeldCartsOpen(true)}
+            >
+              <ClipboardList size={17} />
+              <span>Keranjang ditahan</span>
+              <b>{heldCarts.length}</b>
+            </button>
           </div>
         </header>
 
@@ -485,50 +674,63 @@ export function CashierPage() {
         ) : (
           <div className="pos-product-grid">
             {filteredProducts.map((product) => {
-              const inCart = cart.find((line) => line.productId === product.id)?.quantity || 0;
+              const inCart = cartQuantityByProduct.get(product.id) ?? 0;
               const soldOut = product.stock <= 0;
               return (
-                <button
-                  type="button"
-                  className={`pos-product-card${soldOut ? " pos-product-card--soldout" : ""}`}
-                  key={product.id}
-                  onClick={() => addToCart(product)}
-                  disabled={soldOut}
-                  aria-label={`Tambah ${product.name} ke keranjang`}
-                >
-                  <div className="pos-product-card__image-wrap">
-                    <ProductImage src={product.imageUrl} name={product.name} size="lg" />
-                    {soldOut ? (
-                      <span className="pos-product-card__stock pos-product-card__stock--out">Habis</span>
-                    ) : product.lowStock ? (
-                      <span className="pos-product-card__stock pos-product-card__stock--low">
-                        Sisa {formatQuantity(product.stock)} {product.unit}
-                      </span>
-                    ) : (
-                      <span className="pos-product-card__stock">
-                        {formatQuantity(product.stock)} {product.unit}
-                      </span>
-                    )}
-                    {inCart > 0 && (
-                      <span className="pos-product-card__in-cart">{formatQuantity(inCart)} di keranjang</span>
-                    )}
-                  </div>
-                  <div className="pos-product-card__body">
-                    <span className="pos-product-card__category">{product.categoryName}</span>
-                    <strong>{product.name}</strong>
-                    <div className="pos-product-card__price">
-                      <span>
-                        {formatMoney(product.sellingPrice)}
-                        <small> / {product.unit}</small>
-                      </span>
-                      {!soldOut && (
-                        <span className="pos-product-card__add">
-                          <Plus size={16} />
+                <div className="pos-product-card-wrap" key={product.id}>
+                  <button
+                    type="button"
+                    className={`pos-product-card${soldOut ? " pos-product-card--soldout" : ""}`}
+                    onClick={() => addToCart(product)}
+                    disabled={soldOut}
+                    aria-label={`Tambah ${product.name} ke keranjang`}
+                  >
+                    <div className="pos-product-card__image-wrap">
+                      <ProductImage src={product.imageUrl} name={product.name} size="lg" />
+                      {soldOut ? (
+                        <span className="pos-product-card__stock pos-product-card__stock--out">Habis</span>
+                      ) : product.lowStock ? (
+                        <span className="pos-product-card__stock pos-product-card__stock--low">
+                          Sisa {formatQuantity(product.stock)} {product.unit}
+                        </span>
+                      ) : (
+                        <span className="pos-product-card__stock">
+                          {formatQuantity(product.stock)} {product.unit}
                         </span>
                       )}
+                      {inCart > 0 && (
+                        <span className="pos-product-card__in-cart">{formatQuantity(inCart)} di keranjang</span>
+                      )}
                     </div>
-                  </div>
-                </button>
+                    <div className="pos-product-card__body">
+                      <span className="pos-product-card__category">{product.categoryName}</span>
+                      <strong>{product.name}</strong>
+                      <div className="pos-product-card__price">
+                        <span>
+                          {formatMoney(product.sellingPrice)}
+                          <small> / {product.unit}</small>
+                        </span>
+                        {!soldOut && (
+                          <span className="pos-product-card__add">
+                            <Plus size={16} />
+                          </span>
+                        )}
+                      </div>
+                    </div>
+                  </button>
+                  {inCart > 0 && !soldOut && inCart < product.stock && (
+                    <button
+                      type="button"
+                      className="pos-product-card__new-line"
+                      onClick={() => addNewLine(product)}
+                      aria-label={`Tambah baris terpisah untuk ${product.name}`}
+                      title="Tambah baris dengan jumlah dan nego terpisah"
+                    >
+                      <CopyPlus size={13} />
+                      Baris baru
+                    </button>
+                  )}
+                </div>
               );
             })}
           </div>
@@ -548,9 +750,29 @@ export function CashierPage() {
         <div className="pos-cart__header">
           <div>
             <h2>Keranjang</h2>
-            <span>{cartLineCount > 0 ? `${cartLineCount} produk dipilih` : "Belum ada produk"}</span>
+            <span>{cartLineCount > 0 ? `${cartLineCount} baris dipilih` : "Belum ada produk"}</span>
           </div>
           <div className="pos-cart__header-actions">
+            {cart.length > 0 && (
+              <button
+                type="button"
+                className="pos-cart__clear pos-cart__hold-action"
+                onClick={() => setHoldCartOpen(true)}
+              >
+                <CirclePause size={13} />
+                Tahan
+              </button>
+            )}
+            {heldCarts.length > 0 && (
+              <button
+                type="button"
+                className="pos-cart__clear pos-cart__hold-action"
+                onClick={() => setHeldCartsOpen(true)}
+              >
+                <ClipboardList size={13} />
+                {heldCarts.length} ditahan
+              </button>
+            )}
             {cart.length > 0 && (
               <button type="button" className="pos-cart__clear" onClick={() => setClearConfirmOpen(true)}>
                 Kosongkan
@@ -580,14 +802,14 @@ export function CashierPage() {
             {cartView.map((line) => {
               if (!line.product) {
                 return (
-                  <div className="cart-line cart-line--invalid" key={line.productId}>
+                  <div className="cart-line cart-line--invalid" key={line.lineId}>
                     <div className="cart-line__invalid-message">
                       Produk ini tidak lagi tersedia.
                     </div>
                     <button
                       type="button"
                       className="cart-line__remove"
-                      onClick={() => removeLine(line.productId)}
+                      onClick={() => removeLine(line.lineId)}
                       aria-label="Hapus produk tidak tersedia"
                     >
                       <Trash2 size={16} />
@@ -597,19 +819,30 @@ export function CashierPage() {
               }
 
               const product = line.product;
-              const overStock = line.quantity > product.stock;
+              const aggregateQuantity = cartQuantityByProduct.get(product.id) ?? line.quantity;
+              const overStock = aggregateQuantity > product.stock;
               const step = quantityStep(product.unit);
               return (
-                <div className={`cart-line${overStock ? " cart-line--overstock" : ""}`} key={line.productId}>
+                <div className={`cart-line${overStock ? " cart-line--overstock" : ""}`} key={line.lineId}>
                   <ProductImage src={product.imageUrl} name={product.name} size="sm" />
                   <div className="cart-line__content">
                     <div className="cart-line__title">
                       <div>
-                        <strong>{product.name}</strong>
+                        <div className="cart-line__name-row">
+                          <strong>{product.name}</strong>
+                          {cartView.filter((item) => item.productId === product.id).length > 1 && (
+                            <span className="cart-line__split-badge">
+                              Baris{" "}
+                              {cartView
+                                .filter((item) => item.productId === product.id)
+                                .findIndex((item) => item.lineId === line.lineId) + 1}
+                            </span>
+                          )}
+                        </div>
                         <button
                           type="button"
                           className={`cart-line__price${line.negotiated ? " cart-line__price--negotiated" : ""}`}
-                          onClick={() => setNegotiatingProductId(product.id)}
+                          onClick={() => setNegotiatingLineId(line.lineId)}
                           aria-label={`Atur harga nego ${product.name}`}
                         >
                           {line.negotiationMode === "total" ? (
@@ -641,7 +874,7 @@ export function CashierPage() {
                       <button
                         type="button"
                         className="cart-line__remove"
-                        onClick={() => removeLine(product.id)}
+                        onClick={() => removeLine(line.lineId)}
                         aria-label={`Hapus ${product.name}`}
                       >
                         <Trash2 size={15} />
@@ -652,7 +885,7 @@ export function CashierPage() {
                       <div className="quantity-control">
                         <button
                           type="button"
-                          onClick={() => changeQuantity(product.id, -1)}
+                          onClick={() => changeQuantity(line.lineId, -1)}
                           aria-label={`Kurangi jumlah ${product.name}`}
                         >
                           <Minus size={14} />
@@ -660,12 +893,12 @@ export function CashierPage() {
                         <CartQuantityInput
                           value={line.quantity}
                           unit={product.unit}
-                          onChange={(value) => updateQuantity(product.id, value)}
+                          onChange={(value) => updateQuantity(line.lineId, value)}
                         />
                         <button
                           type="button"
-                          onClick={() => changeQuantity(product.id, 1)}
-                          disabled={line.quantity >= product.stock}
+                          onClick={() => changeQuantity(line.lineId, 1)}
+                          disabled={aggregateQuantity >= product.stock}
                           aria-label={`Tambah jumlah ${product.name}`}
                         >
                           <Plus size={14} />
@@ -685,8 +918,8 @@ export function CashierPage() {
 
                     {overStock && (
                       <p className="cart-line__warning">
-                        Melebihi stok tersisa ({formatQuantity(product.stock)} {product.unit}). Kurangi jumlah
-                        sebelum membayar.
+                        Total {product.name} di keranjang melebihi stok tersisa (
+                        {formatQuantity(product.stock)} {product.unit}). Kurangi jumlah sebelum membayar.
                       </p>
                     )}
                     {!overStock && isFractionalUnit(product.unit) && line.quantity < step && (
@@ -705,7 +938,7 @@ export function CashierPage() {
           <div className="cart-summary-row">
             <span>Jumlah item</span>
             <span>
-              {formatQuantity(totalQuantity)} unit · {cartLineCount} produk
+              {formatQuantity(totalQuantity)} unit · {cartLineCount} baris
             </span>
           </div>
           {(discountTotal > 0 || roundingTotal !== 0) && (
@@ -736,15 +969,25 @@ export function CashierPage() {
           {hasInvalidLine && cart.length > 0 && (
             <p className="cart-summary-warning">Periksa kembali jumlah atau ketersediaan produk.</p>
           )}
-          <Button
-            size="lg"
-            block
-            icon={<Wallet size={18} />}
-            disabled={cart.length === 0 || hasInvalidLine}
-            onClick={() => setPaymentOpen(true)}
-          >
-            Bayar Sekarang
-          </Button>
+          <div className="pos-cart__actions">
+            <Button
+              variant="secondary"
+              size="lg"
+              icon={<CirclePause size={17} />}
+              disabled={cart.length === 0 || hasInvalidLine}
+              onClick={() => setHoldCartOpen(true)}
+            >
+              Tahan
+            </Button>
+            <Button
+              size="lg"
+              icon={<Wallet size={18} />}
+              disabled={cart.length === 0 || hasInvalidLine}
+              onClick={() => setPaymentOpen(true)}
+            >
+              Bayar Sekarang
+            </Button>
+          </div>
           <p className="pos-cart__hint">Harga dan stok divalidasi ulang oleh server saat pembayaran.</p>
         </div>
       </aside>
@@ -778,13 +1021,74 @@ export function CashierPage() {
       {negotiatingLine && (
         <PriceNegotiationModal
           line={negotiatingLine}
-          onClose={() => setNegotiatingProductId(null)}
+          onClose={() => setNegotiatingLineId(null)}
           onApply={(negotiation) => {
-            setLineNegotiation(negotiatingLine.productId, negotiation);
-            setNegotiatingProductId(null);
+            setLineNegotiation(negotiatingLine.lineId, negotiation);
+            setNegotiatingLineId(null);
           }}
         />
       )}
+
+      {holdCartOpen && (
+        <HoldCartModal
+          cart={cartView}
+          total={total}
+          onClose={() => setHoldCartOpen(false)}
+          onSaved={handleHoldSaved}
+        />
+      )}
+
+      {heldCartsOpen && (
+        <HeldCartsModal
+          items={heldCarts}
+          loading={heldCartsQuery.isLoading}
+          currentCartCount={cartLineCount}
+          resumingHoldId={resumingHoldId}
+          deletingHoldId={deletingHoldId}
+          onClose={() => setHeldCartsOpen(false)}
+          onRefresh={() => void heldCartsQuery.refetch()}
+          onResume={(hold) => setResumeTarget(hold)}
+          onDelete={(hold) => setDeleteTarget(hold)}
+        />
+      )}
+
+      <ConfirmDialog
+        open={resumeTarget !== null}
+        title="Lanjutkan keranjang ditahan?"
+        description={
+          resumeTarget
+            ? `Keranjang "${resumeTarget.label}" akan dipindahkan ke kasir. ${
+                cartLineCount > 0
+                  ? "Keranjang yang sedang aktif akan diganti."
+                  : "Keranjang akan dimuat ke layar kasir."
+              }`
+            : ""
+        }
+        confirmLabel="Lanjutkan"
+        tone="primary"
+        loading={resumingHoldId !== null}
+        onClose={() => setResumeTarget(null)}
+        onConfirm={() => {
+          if (resumeTarget) void handleResumeHold(resumeTarget);
+        }}
+      />
+
+      <ConfirmDialog
+        open={deleteTarget !== null}
+        title="Hapus keranjang ditahan?"
+        description={
+          deleteTarget
+            ? `Keranjang "${deleteTarget.label}" berisi ${deleteTarget.itemCount} baris akan dihapus permanen.`
+            : ""
+        }
+        confirmLabel="Hapus"
+        tone="danger"
+        loading={deletingHoldId !== null}
+        onClose={() => setDeleteTarget(null)}
+        onConfirm={() => {
+          if (deleteTarget) void handleDeleteHold(deleteTarget);
+        }}
+      />
 
       {expensesOpen && (
         <CashExpensesModal session={activeSession} onClose={() => setExpensesOpen(false)} />
@@ -808,6 +1112,11 @@ export function CashierPage() {
         <CloseCashSessionModal
           session={activeSession}
           cartItemCount={cartLineCount}
+          heldCartCount={heldCarts.length}
+          onOpenHeldCarts={() => {
+            setCloseSessionOpen(false);
+            setHeldCartsOpen(true);
+          }}
           onClose={() => setCloseSessionOpen(false)}
           onClosed={handleSessionClosed}
         />
@@ -1125,6 +1434,283 @@ function PriceNegotiationModal({ line, onClose, onApply }: PriceNegotiationModal
   );
 }
 
+interface HoldCartModalProps {
+  cart: CartView[];
+  total: number;
+  onClose: () => void;
+  onSaved: (message: string) => void;
+}
+
+function HoldCartModal({ cart, total, onClose, onSaved }: HoldCartModalProps) {
+  const [label, setLabel] = useState("");
+  const [note, setNote] = useState("");
+  const [submitting, setSubmitting] = useState(false);
+  const [error, setError] = useState("");
+  const totalQuantity = roundQuantityValue(cart.reduce((sum, line) => sum + line.quantity, 0));
+
+  const handleSubmit = async (event: FormEvent) => {
+    event.preventDefault();
+    setError("");
+    const trimmedLabel = label.trim();
+    if (trimmedLabel.length === 0) {
+      setError("Beri nama keranjang agar mudah ditemukan kembali.");
+      return;
+    }
+
+    setSubmitting(true);
+    try {
+      const result = await api.heldCarts.create({
+        label: trimmedLabel,
+        note: note.trim() || undefined,
+        items: cartToCheckoutItems(cart),
+      });
+      onSaved(result.message);
+    } catch (submitError) {
+      setError(getErrorMessage(submitError));
+    } finally {
+      setSubmitting(false);
+    }
+  };
+
+  return (
+    <Modal
+      open
+      onClose={() => !submitting && onClose()}
+      title="Tahan Keranjang"
+      subtitle="Lanjutkan nanti tanpa kehilangan jumlah dan nego"
+      size="sm"
+      closeOnOverlay={!submitting}
+      footer={
+        <>
+          <Button variant="ghost" onClick={onClose} disabled={submitting}>
+            Batal
+          </Button>
+          <Button
+            type="submit"
+            form="hold-cart-form"
+            loading={submitting}
+            icon={!submitting ? <CirclePause size={17} /> : undefined}
+          >
+            Tahan Keranjang
+          </Button>
+        </>
+      }
+    >
+      <form id="hold-cart-form" className="form-stack" onSubmit={handleSubmit} noValidate>
+        <div className="hold-cart-summary">
+          <span className="hold-cart-summary__icon">
+            <ShoppingBasket size={18} />
+          </span>
+          <div>
+            <strong>
+              {cart.length} baris · {formatQuantity(totalQuantity)} unit
+            </strong>
+            <p>Perkiraan total {formatMoney(total)}. Stok baru dipotong saat pembayaran.</p>
+          </div>
+        </div>
+
+        <Field
+          label="Nama keranjang"
+          htmlFor="hold-cart-label"
+          hint="Contoh: Ibu Rina, pesanan meja 2, atau belanja RT."
+          required
+        >
+          <input
+            id="hold-cart-label"
+            type="text"
+            maxLength={120}
+            value={label}
+            onChange={(event) => {
+              setLabel(event.target.value);
+              setError("");
+            }}
+            placeholder="Nama pelanggan atau catatan singkat"
+            autoFocus
+          />
+        </Field>
+
+        <Field
+          label="Catatan tambahan"
+          htmlFor="hold-cart-note"
+          hint={`Opsional, maksimal 300 karakter. ${note.length}/300`}
+        >
+          <textarea
+            id="hold-cart-note"
+            rows={3}
+            maxLength={300}
+            value={note}
+            onChange={(event) => setNote(event.target.value)}
+            placeholder="Misalnya: diambil sore, minta pisang matang"
+          />
+        </Field>
+
+        <p className="hold-cart-note">
+          Keranjang ditahan terikat pada sesi kas yang sedang terbuka dan tidak dapat ditutup
+          sebelum keranjang ini dilanjutkan atau dihapus.
+        </p>
+
+        {error && <div className="auth-alert auth-alert--error">{error}</div>}
+      </form>
+    </Modal>
+  );
+}
+
+interface HeldCartsModalProps {
+  items: HeldCart[];
+  loading: boolean;
+  currentCartCount: number;
+  resumingHoldId: string | null;
+  deletingHoldId: string | null;
+  onClose: () => void;
+  onRefresh: () => void;
+  onResume: (hold: HeldCart) => void;
+  onDelete: (hold: HeldCart) => void;
+}
+
+function HeldCartsModal({
+  items,
+  loading,
+  currentCartCount,
+  resumingHoldId,
+  deletingHoldId,
+  onClose,
+  onRefresh,
+  onResume,
+  onDelete,
+}: HeldCartsModalProps) {
+  return (
+    <Modal
+      open
+      onClose={onClose}
+      title="Keranjang Ditahan"
+      subtitle={
+        items.length > 0
+          ? `${items.length} keranjang menunggu dilanjutkan`
+          : "Belum ada keranjang yang ditahan"
+      }
+      size="md"
+      footer={
+        <>
+          <Button variant="ghost" onClick={onClose}>
+            Tutup
+          </Button>
+          <Button variant="secondary" onClick={onRefresh} disabled={loading}>
+            Muat ulang
+          </Button>
+        </>
+      }
+    >
+      {loading ? (
+        <PageLoader label="Memuat keranjang ditahan..." />
+      ) : items.length === 0 ? (
+        <div className="held-carts-empty">
+          <span>
+            <CirclePause size={26} />
+          </span>
+          <h3>Belum ada keranjang ditahan</h3>
+          <p>
+            Saat pelanggan ingin melanjutkan nanti, tekan tombol Tahan pada keranjang.
+            Keranjang tetap tersimpan selama kas masih terbuka.
+          </p>
+        </div>
+      ) : (
+        <div className="held-carts-list">
+          {currentCartCount > 0 && (
+            <div className="held-carts-warning">
+              <CircleAlert size={16} />
+              <p>
+                Keranjang aktif saat ini ({currentCartCount} baris) akan diganti jika Anda
+                melanjutkan salah satu keranjang di bawah.
+              </p>
+            </div>
+          )}
+          {items.map((hold) => {
+            const hasIssue = hold.items.some(
+              (item) => !item.isActive || item.availableStock < item.quantity,
+            );
+            return (
+              <article className="held-cart-card" key={hold.id}>
+                <header className="held-cart-card__head">
+                  <div>
+                    <strong>{hold.label}</strong>
+                    <span>
+                      {hold.createdBy.name} · {formatDateTime(hold.createdAt)}
+                    </span>
+                  </div>
+                  <div className="held-cart-card__badges">
+                    <Badge tone={hasIssue ? "amber" : "green"}>
+                      {hasIssue ? "Perlu dicek" : "Siap"}
+                    </Badge>
+                    <Badge tone="gray">{hold.itemCount} baris</Badge>
+                  </div>
+                </header>
+
+                <div className="held-cart-card__meta">
+                  <span>{formatQuantity(hold.totalQuantity)} unit</span>
+                  <strong>± {formatMoney(hold.estimatedTotal)}</strong>
+                </div>
+
+                {hold.note && <p className="held-cart-card__note">{hold.note}</p>}
+
+                <ul className="held-cart-card__items">
+                  {hold.items.map((item, index) => (
+                    <li key={`${hold.id}-${item.productId}-${index}`}>
+                      <span>
+                        {item.productName}
+                        {hold.items.filter((entry) => entry.productId === item.productId).length > 1 && (
+                          <small>
+                            {" "}· baris{" "}
+                            {hold.items
+                              .filter((entry) => entry.productId === item.productId)
+                              .findIndex((entry) => entry === item) + 1}
+                          </small>
+                        )}
+                      </span>
+                      <strong>
+                        {formatQuantity(item.quantity)} {item.unit}
+                      </strong>
+                      <em>{formatMoney(item.lineTotal)}</em>
+                      {(!item.isActive || item.availableStock < item.quantity) && (
+                        <small className="held-cart-card__issue">
+                          {!item.isActive
+                            ? "Produk tidak aktif"
+                            : `Stok ${formatQuantity(item.availableStock)} ${item.unit}`}
+                        </small>
+                      )}
+                    </li>
+                  ))}
+                </ul>
+
+                <div className="held-cart-card__actions">
+                  <Button
+                    variant="ghost"
+                    size="sm"
+                    icon={<Trash2 size={14} />}
+                    loading={deletingHoldId === hold.id}
+                    disabled={resumingHoldId !== null || deletingHoldId !== null}
+                    onClick={() => onDelete(hold)}
+                  >
+                    Hapus
+                  </Button>
+                  <Button
+                    size="sm"
+                    icon={<Play size={14} />}
+                    loading={resumingHoldId === hold.id}
+                    disabled={resumingHoldId !== null || deletingHoldId !== null}
+                    onClick={() => onResume(hold)}
+                  >
+                    Lanjutkan
+                  </Button>
+                </div>
+              </article>
+            );
+          })}
+        </div>
+      )}
+    </Modal>
+  );
+}
+
 function PaymentModal({
   cart,
   subtotal,
@@ -1218,7 +1804,7 @@ function PaymentModal({
       open
       onClose={() => !submitting && onClose()}
       title="Pembayaran"
-      subtitle={`${formatQuantity(totalItems)} unit · ${cart.length} produk`}
+      subtitle={`${formatQuantity(totalItems)} unit · ${cart.length} baris`}
       size="md"
       closeOnOverlay={!submitting}
       footer={
@@ -1252,7 +1838,7 @@ function PaymentModal({
               Harga normal {formatMoney(subtotal)} · Pembulatan {formatSignedMoney(roundingTotal)}
             </p>
           ) : (
-            <p>{formatQuantity(totalItems)} unit dari {cart.length} produk</p>
+            <p>{formatQuantity(totalItems)} unit dari {cart.length} baris</p>
           )}
         </div>
 
@@ -1276,11 +1862,11 @@ function PaymentModal({
             <div className="payment-negotiation-card__head">
               <BadgePercent size={16} />
               <strong>Rincian harga nego</strong>
-              <span>{negotiatedLines.length} produk</span>
+              <span>{negotiatedLines.length} baris</span>
             </div>
             <div className="payment-negotiation-list">
               {negotiatedLines.map((line) => (
-                <div className="payment-negotiation-item" key={line.productId}>
+                <div className="payment-negotiation-item" key={line.lineId}>
                   <div>
                     <strong>{line.product?.name}</strong>
                     <span>

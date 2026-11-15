@@ -49,6 +49,12 @@ const sampleReceipt: TransactionDetail = {
   notes: null,
   discountReason: "Contoh nego pelanggan",
   itemCount: 2,
+  status: "completed",
+  canVoid: false,
+  voidType: null,
+  voidReason: null,
+  voidedBy: null,
+  voidedAt: null,
   createdAt: new Date().toISOString(),
   items: [
     {

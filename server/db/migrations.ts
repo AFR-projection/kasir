@@ -316,6 +316,104 @@ const negotiationModeSchema: Migration = {
   `,
 };
 
+const voidAndHeldCartsSchema: Migration = {
+  name: "008_void_and_held_carts",
+  sql: `
+    -- Transaksi tidak pernah dihapus. Pembatalan/retur hanya mengubah status
+    -- dan menyimpan jejak audit agar laporan serta stok tetap konsisten.
+    ALTER TABLE transactions
+      ADD COLUMN status VARCHAR(12) NOT NULL DEFAULT 'completed',
+      ADD COLUMN void_type VARCHAR(10),
+      ADD COLUMN void_reason VARCHAR(300),
+      ADD COLUMN voided_by UUID REFERENCES users(id) ON DELETE RESTRICT,
+      ADD COLUMN voided_at TIMESTAMPTZ;
+
+    ALTER TABLE transactions
+      ADD CONSTRAINT transactions_status_check
+        CHECK (status IN ('completed', 'voided')),
+      ADD CONSTRAINT transactions_void_fields_check CHECK (
+        (
+          status = 'completed'
+          AND void_type IS NULL
+          AND void_reason IS NULL
+          AND voided_by IS NULL
+          AND voided_at IS NULL
+        )
+        OR (
+          status = 'voided'
+          AND void_type IN ('void', 'return')
+          AND void_reason IS NOT NULL
+          AND char_length(btrim(void_reason)) BETWEEN 3 AND 300
+          AND voided_by IS NOT NULL
+          AND voided_at IS NOT NULL
+        )
+      );
+
+    CREATE INDEX transactions_status_created_idx
+      ON transactions (status, created_at DESC);
+
+    -- Produk yang sama boleh muncul di beberapa baris. Nomor baris menjaga
+    -- urutan tampilan struk dan riwayat tetap sama seperti saat kasir input.
+    ALTER TABLE transaction_items
+      ADD COLUMN line_number SMALLINT;
+
+    WITH numbered AS (
+      SELECT id,
+             ROW_NUMBER() OVER (
+               PARTITION BY transaction_id
+               ORDER BY created_at ASC, id ASC
+             ) AS line_number
+      FROM transaction_items
+    )
+    UPDATE transaction_items ti
+    SET line_number = n.line_number
+    FROM numbered n
+    WHERE ti.id = n.id;
+
+    ALTER TABLE transaction_items
+      ALTER COLUMN line_number SET NOT NULL,
+      ADD CONSTRAINT transaction_items_line_number_check
+        CHECK (line_number BETWEEN 1 AND 100);
+
+    CREATE UNIQUE INDEX transaction_items_transaction_line_idx
+      ON transaction_items (transaction_id, line_number);
+
+    ALTER TABLE stock_movements
+      DROP CONSTRAINT stock_movements_type_check;
+
+    ALTER TABLE stock_movements
+      ADD CONSTRAINT stock_movements_type_check
+        CHECK (movement_type IN ('in', 'out', 'adjustment', 'sale', 'void'));
+
+    -- Keranjang ditahan terikat pada sesi kas yang sedang terbuka. Isi
+    -- keranjang disimpan sebagai JSON agar baris duplikat dan nego tetap utuh.
+    CREATE TABLE held_carts (
+      id UUID PRIMARY KEY DEFAULT gen_random_uuid(),
+      cash_session_id UUID NOT NULL REFERENCES cash_sessions(id) ON DELETE CASCADE,
+      created_by UUID NOT NULL REFERENCES users(id) ON DELETE RESTRICT,
+      label VARCHAR(120) NOT NULL,
+      note VARCHAR(300),
+      items JSONB NOT NULL,
+      created_at TIMESTAMPTZ NOT NULL DEFAULT NOW(),
+      CONSTRAINT held_carts_label_check
+        CHECK (char_length(btrim(label)) BETWEEN 1 AND 120),
+      CONSTRAINT held_carts_note_check
+        CHECK (note IS NULL OR char_length(btrim(note)) BETWEEN 1 AND 300),
+      CONSTRAINT held_carts_items_check
+        CHECK (
+          CASE
+            WHEN jsonb_typeof(items) = 'array'
+              THEN jsonb_array_length(items) BETWEEN 1 AND 100
+            ELSE FALSE
+          END
+        )
+    );
+
+    CREATE INDEX held_carts_session_created_idx
+      ON held_carts (cash_session_id, created_at DESC);
+  `,
+};
+
 const scaleRoundingSchema: Migration = {
   name: "006_scale_rounding",
   sql: `
@@ -352,4 +450,5 @@ export const migrations: Migration[] = [
   allowNegativeExpectedCash,
   scaleRoundingSchema,
   negotiationModeSchema,
+  voidAndHeldCartsSchema,
 ];

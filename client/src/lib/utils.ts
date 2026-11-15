@@ -107,6 +107,7 @@ export function formatMovementType(type: string): string {
     out: "Stok Keluar",
     adjustment: "Penyesuaian",
     sale: "Penjualan",
+    void: "Pembatalan / Retur",
   };
   return labels[type] || type;
 }

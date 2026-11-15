@@ -78,18 +78,20 @@ export const stockInputSchema = z.object({
 
 export const paymentMethods = ["cash", "qris", "debit", "transfer"] as const;
 
+export const cartLineInputSchema = z.object({
+  productId: uuidSchema,
+  quantity: positiveQuantitySchema,
+  unitPrice: moneySchema.optional(),
+  negotiatedTotal: moneySchema.optional(),
+});
+
+export const cartItemsSchema = z
+  .array(cartLineInputSchema)
+  .min(1, "Keranjang tidak boleh kosong.")
+  .max(100, "Maksimal 100 baris per keranjang.");
+
 export const transactionInputSchema = z.object({
-  items: z
-    .array(
-      z.object({
-        productId: uuidSchema,
-        quantity: positiveQuantitySchema,
-        unitPrice: moneySchema.optional(),
-        negotiatedTotal: moneySchema.optional(),
-      }),
-    )
-    .min(1, "Keranjang tidak boleh kosong.")
-    .max(100, "Maksimal 100 produk per transaksi."),
+  items: cartItemsSchema,
   paymentMethod: z.enum(paymentMethods, {
     errorMap: () => ({ message: "Metode pembayaran tidak valid." }),
   }),
@@ -97,6 +99,19 @@ export const transactionInputSchema = z.object({
   notes: optionalTrimmedString(500, "Catatan"),
   discountReason: optionalTrimmedString(300, "Alasan nego/diskon"),
   clientReference: z.string().uuid("Referensi transaksi tidak valid."),
+});
+
+export const heldCartInputSchema = z.object({
+  label: trimmedString(1, 120, "Nama keranjang"),
+  note: optionalTrimmedString(300, "Catatan"),
+  items: cartItemsSchema,
+});
+
+export const voidTransactionInputSchema = z.object({
+  type: z.enum(["void", "return"], {
+    errorMap: () => ({ message: "Jenis pembatalan tidak valid." }),
+  }),
+  reason: trimmedString(3, 300, "Alasan"),
 });
 
 export function parseId(value: unknown): string {

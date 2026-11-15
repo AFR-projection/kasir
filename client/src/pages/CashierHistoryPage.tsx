@@ -96,8 +96,13 @@ export function CashierHistoryPage() {
             <ReceiptText size={19} />
           </span>
           <div>
-            <span>Transaksi ditemukan</span>
-            <strong>{historyQuery.data?.summary.count ?? "—"}</strong>
+            <span>Transaksi selesai</span>
+            <strong>{historyQuery.data?.summary.completedCount ?? "—"}</strong>
+            {(historyQuery.data?.summary.voidedCount ?? 0) > 0 && (
+              <small className="summary-card__note">
+                {historyQuery.data?.summary.voidedCount} void/retur
+              </small>
+            )}
           </div>
         </div>
         <div className="summary-card summary-card--wide">
@@ -107,6 +112,7 @@ export function CashierHistoryPage() {
           <div>
             <span>Total nilai transaksi</span>
             <strong>{historyQuery.data ? formatMoney(historyQuery.data.summary.totalSales) : "—"}</strong>
+            <small className="summary-card__note">Transaksi void tidak dihitung</small>
           </div>
         </div>
       </div>
@@ -192,7 +198,12 @@ export function CashierHistoryPage() {
           <>
             <div className="cashier-transaction-list">
               {historyQuery.data?.items.map((transaction) => (
-                <article className="cashier-transaction-card" key={transaction.id}>
+                <article
+                  className={`cashier-transaction-card${
+                    transaction.status === "voided" ? " cashier-transaction-card--voided" : ""
+                  }`}
+                  key={transaction.id}
+                >
                   <div className="cashier-transaction-card__icon">
                     <ReceiptText size={19} />
                   </div>
@@ -202,9 +213,19 @@ export function CashierHistoryPage() {
                       <Badge tone={paymentTone(transaction.paymentMethod)}>
                         {formatPaymentMethod(transaction.paymentMethod)}
                       </Badge>
+                      {transaction.status === "voided" && (
+                        <Badge tone="red">
+                          {transaction.voidType === "return" ? "Retur" : "Dibatalkan"}
+                        </Badge>
+                      )}
                     </div>
                     <span>{formatDateTime(transaction.createdAt)}</span>
-                    <span>{transaction.itemCount} jenis produk</span>
+                    <span>{transaction.itemCount} baris produk</span>
+                    {transaction.status === "voided" && transaction.voidReason && (
+                      <span className="cashier-transaction-card__void">
+                        Alasan: {transaction.voidReason}
+                      </span>
+                    )}
                   </div>
                   <div className="cashier-transaction-card__amount">
                     <span>Total</span>

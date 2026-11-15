@@ -9,6 +9,8 @@ export type RealtimeEventType =
   | "category.deleted"
   | "stock.adjusted"
   | "transaction.created"
+  | "transaction.voided"
+  | "held-cart.changed"
   | "cash-session.changed"
   | "cash-expense.changed"
   | "user.changed"

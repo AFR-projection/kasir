@@ -4,6 +4,7 @@ import {
   Calculator,
   CircleAlert,
   CircleCheck,
+  ClipboardList,
   Clock3,
   LockKeyhole,
   ReceiptText,
@@ -293,11 +294,15 @@ export function CashSessionBar({
 export function CloseCashSessionModal({
   session,
   cartItemCount,
+  heldCartCount,
+  onOpenHeldCarts,
   onClose,
   onClosed,
 }: {
   session: CashSession;
   cartItemCount: number;
+  heldCartCount: number;
+  onOpenHeldCarts: () => void;
   onClose: () => void;
   onClosed: (session: CashSession) => void;
 }) {
@@ -314,6 +319,7 @@ export function CloseCashSessionModal({
     countedValue !== null &&
     Number.isFinite(countedValue) &&
     countedValue >= 0 &&
+    heldCartCount === 0 &&
     (!noteRequired || notes.trim().length > 0);
 
   const handleSubmit = async (event: FormEvent) => {
@@ -322,6 +328,12 @@ export function CloseCashSessionModal({
 
     if (countedValue === null || !Number.isFinite(countedValue) || countedValue < 0) {
       setError("Masukkan jumlah uang tunai hasil hitung laci.");
+      return;
+    }
+    if (heldCartCount > 0) {
+      setError(
+        `Masih ada ${heldCartCount} keranjang ditahan. Lanjutkan atau hapus keranjang tersebut sebelum menutup kas.`,
+      );
       return;
     }
     if (noteRequired && !notes.trim()) {
@@ -485,6 +497,21 @@ export function CloseCashSessionModal({
               Keranjang masih berisi {cartItemCount} produk yang belum dibayar. Produk tersebut tidak akan
               menjadi transaksi dan keranjang akan dikosongkan saat kas ditutup.
             </p>
+          </div>
+        )}
+
+        {heldCartCount > 0 && (
+          <div className="cash-close-warning cash-close-warning--blocking">
+            <ClipboardList size={17} />
+            <div>
+              <p>
+                Masih ada <strong>{heldCartCount} keranjang ditahan</strong> pada sesi ini. Lanjutkan
+                atau hapus semuanya sebelum kas bisa ditutup.
+              </p>
+              <Button variant="secondary" size="sm" onClick={onOpenHeldCarts}>
+                Lihat keranjang ditahan
+              </Button>
+            </div>
           </div>
         )}
 

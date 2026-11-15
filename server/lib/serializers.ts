@@ -38,6 +38,8 @@ export interface ProductDto {
   updatedAt: string;
 }
 
+export type StockMovementType = "in" | "out" | "adjustment" | "sale" | "void";
+
 export interface StockMovementDto {
   id: string;
   productId: string;
@@ -46,13 +48,16 @@ export interface StockMovementDto {
   userName: string;
   transactionId: string | null;
   invoiceNumber: string | null;
-  movementType: "in" | "out" | "adjustment" | "sale";
+  movementType: StockMovementType;
   quantity: number;
   previousStock: number;
   currentStock: number;
   notes: string | null;
   createdAt: string;
 }
+
+export type TransactionStatus = "completed" | "voided";
+export type VoidType = "void" | "return";
 
 export interface TransactionSummaryDto {
   id: string;
@@ -64,6 +69,12 @@ export interface TransactionSummaryDto {
   roundingTotal: number;
   paymentMethod: "cash" | "qris" | "debit" | "transfer";
   itemCount: number;
+  status: TransactionStatus;
+  canVoid: boolean;
+  voidType: VoidType | null;
+  voidReason: string | null;
+  voidedBy: { id: string; name: string } | null;
+  voidedAt: string | null;
   createdAt: string;
 }
 
@@ -98,6 +109,31 @@ export interface TransactionDetailDto extends TransactionSummaryDto {
   discountReason: string | null;
   items: TransactionItemDto[];
   store: StoreDto;
+}
+
+export interface HeldCartItemDto {
+  productId: string;
+  productName: string;
+  unit: string;
+  quantity: number;
+  unitPrice: number | null;
+  negotiatedTotal: number | null;
+  lineTotal: number;
+  availableStock: number;
+  isActive: boolean;
+}
+
+export interface HeldCartDto {
+  id: string;
+  cashSessionId: string;
+  label: string;
+  note: string | null;
+  createdBy: { id: string; name: string };
+  createdAt: string;
+  itemCount: number;
+  totalQuantity: number;
+  estimatedTotal: number;
+  items: HeldCartItemDto[];
 }
 
 export interface UserRow {
@@ -197,7 +233,7 @@ export interface StockMovementRow {
   user_name: string;
   transaction_id: string | null;
   invoice_number: string | null;
-  movement_type: "in" | "out" | "adjustment" | "sale";
+  movement_type: StockMovementType;
   quantity: number;
   previous_stock: number;
   current_stock: number;
@@ -233,6 +269,13 @@ export interface TransactionSummaryRow {
   rounding_total: number;
   payment_method: "cash" | "qris" | "debit" | "transfer";
   item_count: number;
+  status: TransactionStatus;
+  can_void: boolean;
+  void_type: VoidType | null;
+  void_reason: string | null;
+  voided_by_id: string | null;
+  voided_by_name: string | null;
+  voided_at: Date | string | null;
   created_at: Date | string;
 }
 
@@ -247,6 +290,15 @@ export function mapTransactionSummary(row: TransactionSummaryRow): TransactionSu
     roundingTotal: Number(row.rounding_total ?? 0),
     paymentMethod: row.payment_method,
     itemCount: Number(row.item_count),
+    status: row.status,
+    canVoid: Boolean(row.can_void),
+    voidType: row.void_type,
+    voidReason: row.void_reason,
+    voidedBy:
+      row.voided_by_id && row.voided_by_name
+        ? { id: row.voided_by_id, name: row.voided_by_name }
+        : null,
+    voidedAt: iso(row.voided_at),
     createdAt: iso(row.created_at)!,
   };
 }

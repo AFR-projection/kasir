@@ -40,10 +40,11 @@ import { ProductImage } from "../components/ProductImage";
 type StockTab = "current" | "history";
 type AdjustmentMode = "in" | "out" | "adjustment";
 
-function movementTone(type: StockMovementType): "green" | "red" | "blue" | "purple" {
+function movementTone(type: StockMovementType): "green" | "red" | "blue" | "purple" | "amber" {
   if (type === "in") return "green";
   if (type === "out") return "red";
   if (type === "sale") return "purple";
+  if (type === "void") return "amber";
   return "blue";
 }
 
@@ -388,6 +389,7 @@ function StockHistoryTab() {
           <option value="out">Stok keluar</option>
           <option value="adjustment">Penyesuaian</option>
           <option value="sale">Penjualan</option>
+          <option value="void">Pembatalan / retur</option>
         </select>
         <div className="date-range">
           <label>

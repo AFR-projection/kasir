@@ -89,7 +89,7 @@ export interface CreateProductInput extends ProductInput {
   stock: number;
 }
 
-export type StockMovementType = "in" | "out" | "adjustment" | "sale";
+export type StockMovementType = "in" | "out" | "adjustment" | "sale" | "void";
 
 export interface StockMovement {
   id: string;
@@ -145,6 +145,8 @@ export interface StockAdjustmentResponse {
 }
 
 export type PaymentMethod = "cash" | "qris" | "debit" | "transfer";
+export type TransactionStatus = "completed" | "voided";
+export type VoidType = "void" | "return";
 
 export interface TransactionSummary {
   id: string;
@@ -156,6 +158,12 @@ export interface TransactionSummary {
   roundingTotal: number;
   paymentMethod: PaymentMethod;
   itemCount: number;
+  status: TransactionStatus;
+  canVoid: boolean;
+  voidType: VoidType | null;
+  voidReason: string | null;
+  voidedBy: { id: string; name: string } | null;
+  voidedAt: string | null;
   createdAt: string;
 }
 
@@ -191,6 +199,8 @@ export interface TransactionListResponse {
   limit: number;
   summary: {
     count: number;
+    completedCount: number;
+    voidedCount: number;
     totalSales: number;
   };
 }
@@ -207,6 +217,53 @@ export interface CheckoutInput {
 export interface CheckoutResponse {
   transaction: TransactionDetail;
   alreadyProcessed: boolean;
+  message: string;
+}
+
+export interface VoidTransactionInput {
+  type: VoidType;
+  reason: string;
+}
+
+export interface HeldCartItem {
+  productId: string;
+  productName: string;
+  unit: string;
+  quantity: number;
+  unitPrice: number | null;
+  negotiatedTotal: number | null;
+  lineTotal: number;
+  availableStock: number;
+  isActive: boolean;
+}
+
+export interface HeldCart {
+  id: string;
+  cashSessionId: string;
+  label: string;
+  note: string | null;
+  createdBy: { id: string; name: string };
+  createdAt: string;
+  itemCount: number;
+  totalQuantity: number;
+  estimatedTotal: number;
+  items: HeldCartItem[];
+}
+
+export interface HeldCartListResponse {
+  items: HeldCart[];
+  total: number;
+}
+
+export interface CreateHeldCartInput {
+  label: string;
+  note?: string;
+  items: Array<{ productId: string; quantity: number; unitPrice?: number; negotiatedTotal?: number }>;
+}
+
+export interface ResumeHeldCartResponse {
+  heldCart: { id: string; label: string; note: string | null };
+  items: Array<{ productId: string; quantity: number; unitPrice?: number; negotiatedTotal?: number }>;
   message: string;
 }
 
@@ -238,6 +295,7 @@ export interface TransactionQuery {
   search?: string;
   dateFrom?: string;
   dateTo?: string;
+  status?: "all" | TransactionStatus;
   page?: number;
   limit?: number;
 }
@@ -277,6 +335,7 @@ export interface CashSession {
   cashSales: number;
   nonCashSales: number;
   totalExpenses: number;
+  heldCartCount: number;
 }
 
 export interface CashSessionCurrentResponse {

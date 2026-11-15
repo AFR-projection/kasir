@@ -2,10 +2,10 @@ import { Router } from "express";
 import { z } from "zod";
 import { pool, withTransaction } from "../db/pool";
 import { config } from "../config";
-import { currentUser, requireAuth, requireCashier } from "../lib/auth";
+import { currentUser, requireAuth, requireCashier, requireOwner } from "../lib/auth";
 import { asyncHandler, AppError } from "../lib/http";
+import { formatRupiah, priceCartLine } from "../lib/pricing";
 import { emitEvent } from "../lib/realtime";
-import { isScaleUnit, roundToScaleStep } from "../lib/rounding";
 import { getStore } from "../lib/store";
 import {
   mapTransactionSummary,
@@ -21,6 +21,7 @@ import {
   roundQuantity,
   transactionInputSchema,
   uuidSchema,
+  voidTransactionInputSchema,
 } from "../lib/validation";
 
 export const transactionsRouter = Router();
@@ -58,24 +59,19 @@ interface LockedProductRow {
   is_active: boolean;
 }
 
-const rupiahFormatter = new Intl.NumberFormat("id-ID", {
-  style: "currency",
-  currency: "IDR",
-  minimumFractionDigits: 0,
-});
-
-function formatRupiah(value: number): string {
-  return rupiahFormatter.format(value);
-}
-
 async function getTransactionDetailById(id: string): Promise<TransactionDetailDto | null> {
   const result = await pool.query<TransactionDetailRow>(
     `SELECT t.id, t.invoice_number, t.cashier_id, u.name AS cashier_name,
             t.subtotal, t.discount_total, t.discount_reason, t.rounding_total, t.total,
             t.payment_method, t.amount_paid, t.change_due, t.notes, t.created_at,
+            t.status, t.void_type, t.void_reason, t.voided_at,
+            vu.id AS voided_by_id, vu.name AS voided_by_name,
+            (t.status = 'completed' AND cs.status = 'open') AS can_void,
             (SELECT COUNT(*)::int FROM transaction_items ti WHERE ti.transaction_id = t.id) AS item_count
      FROM transactions t
      JOIN users u ON u.id = t.cashier_id
+     LEFT JOIN users vu ON vu.id = t.voided_by
+     LEFT JOIN cash_sessions cs ON cs.id = t.cash_session_id
      WHERE t.id = $1`,
     [id],
   );
@@ -87,7 +83,7 @@ async function getTransactionDetailById(id: string): Promise<TransactionDetailDt
             unit_price, discount_amount, rounding_amount, negotiation_mode, line_total
      FROM transaction_items
      WHERE transaction_id = $1
-     ORDER BY created_at ASC, id ASC`,
+     ORDER BY line_number ASC`,
     [id],
   );
 
@@ -128,6 +124,7 @@ const listQuerySchema = z.object({
   search: z.string().trim().max(100).optional(),
   dateFrom: dateInputSchema.optional(),
   dateTo: dateInputSchema.optional(),
+  status: z.enum(["all", "completed", "voided"]).default("all"),
   page: z.coerce.number().int().min(1).default(1),
   limit: z.coerce.number().int().min(1).max(100).default(20),
 });
@@ -169,10 +166,22 @@ transactionsRouter.get(
       values.push(query.dateTo);
       conditions.push(`(t.created_at AT TIME ZONE ${timezone})::date <= $${values.length}::date`);
     }
+    if (query.status !== "all") {
+      values.push(query.status);
+      conditions.push(`t.status = $${values.length}`);
+    }
 
     const where = conditions.length ? `WHERE ${conditions.join(" AND ")}` : "";
-    const summaryResult = await pool.query<{ count: number; total_sales: number }>(
-      `SELECT COUNT(*)::int AS count, COALESCE(SUM(t.total), 0)::numeric AS total_sales
+    const summaryResult = await pool.query<{
+      count: number;
+      completed_count: number;
+      voided_count: number;
+      total_sales: number;
+    }>(
+      `SELECT COUNT(*)::int AS count,
+              COUNT(*) FILTER (WHERE t.status = 'completed')::int AS completed_count,
+              COUNT(*) FILTER (WHERE t.status = 'voided')::int AS voided_count,
+              COALESCE(SUM(t.total) FILTER (WHERE t.status = 'completed'), 0)::numeric AS total_sales
        FROM transactions t
        JOIN users u ON u.id = t.cashier_id
        ${where}`,
@@ -184,9 +193,14 @@ transactionsRouter.get(
     const result = await pool.query<TransactionSummaryRow>(
       `SELECT t.id, t.invoice_number, t.cashier_id, u.name AS cashier_name,
               t.total, t.discount_total, t.rounding_total, t.payment_method, t.created_at,
+              t.status, t.void_type, t.void_reason, t.voided_at,
+              vu.id AS voided_by_id, vu.name AS voided_by_name,
+              (t.status = 'completed' AND cs.status = 'open') AS can_void,
               (SELECT COUNT(*)::int FROM transaction_items ti WHERE ti.transaction_id = t.id) AS item_count
        FROM transactions t
        JOIN users u ON u.id = t.cashier_id
+       LEFT JOIN users vu ON vu.id = t.voided_by
+       LEFT JOIN cash_sessions cs ON cs.id = t.cash_session_id
        ${where}
        ORDER BY t.created_at DESC
        LIMIT $${listValues.length - 1} OFFSET $${listValues.length}`,
@@ -200,6 +214,8 @@ transactionsRouter.get(
       limit: query.limit,
       summary: {
         count: summaryResult.rows[0].count,
+        completedCount: summaryResult.rows[0].completed_count,
+        voidedCount: summaryResult.rows[0].voided_count,
         totalSales: Number(summaryResult.rows[0].total_sales),
       },
     });
@@ -230,16 +246,7 @@ transactionsRouter.post(
     const body = transactionInputSchema.parse(req.body);
     const paymentAmount = roundMoney(body.amountPaid);
 
-    const requestedItems = new Map<
-      string,
-      { quantity: number; unitPrice: number | null; negotiatedTotal: number | null }
-    >();
-    for (const item of body.items) {
-      if (requestedItems.has(item.productId)) {
-        throw new AppError(400, "Produk yang sama tidak boleh muncul lebih dari sekali dalam keranjang.", {
-          code: "DUPLICATE_PRODUCT",
-        });
-      }
+    const requestedLines = body.items.map((item) => {
       const quantity = roundQuantity(item.quantity);
       if (quantity <= 0) {
         throw new AppError(400, "Jumlah produk tidak valid.");
@@ -249,13 +256,25 @@ transactionsRouter.post(
           code: "INVALID_NEGOTIATION",
         });
       }
-      requestedItems.set(item.productId, {
+      return {
+        productId: item.productId,
         quantity,
         unitPrice: item.unitPrice === undefined ? null : roundMoney(item.unitPrice),
-        negotiatedTotal: item.negotiatedTotal === undefined ? null : roundMoney(item.negotiatedTotal),
-      });
+        negotiatedTotal:
+          item.negotiatedTotal === undefined ? null : roundMoney(item.negotiatedTotal),
+      };
+    });
+
+    // Baris dengan produk yang sama tetap dihitung terpisah untuk harga dan
+    // nego, tetapi stok divalidasi serta dikurangi sekali per produk.
+    const requestedQuantityByProduct = new Map<string, number>();
+    for (const line of requestedLines) {
+      requestedQuantityByProduct.set(
+        line.productId,
+        roundQuantity((requestedQuantityByProduct.get(line.productId) ?? 0) + line.quantity),
+      );
     }
-    const productIds = Array.from(requestedItems.keys()).sort();
+    const productIds = Array.from(requestedQuantityByProduct.keys()).sort();
 
     try {
       const outcome = await withTransaction(async (client) => {
@@ -322,101 +341,43 @@ transactionsRouter.post(
         let subtotal = 0;
         let discountTotal = 0;
         let roundingTotal = 0;
+
         for (const productId of productIds) {
           const product = productsById.get(productId)!;
-          const requested = requestedItems.get(productId)!;
-          const quantity = requested.quantity;
+          const requestedQuantity = requestedQuantityByProduct.get(productId)!;
 
           if (!product.is_active) {
             throw new AppError(409, `Produk "${product.name}" sudah tidak dijual.`);
           }
-          if (Number(product.stock) < quantity) {
+          if (Number(product.stock) < requestedQuantity) {
             throw new AppError(
               409,
               `Stok "${product.name}" tidak mencukupi. Tersedia ${Number(product.stock)} ${product.unit}.`,
               { code: "INSUFFICIENT_STOCK" },
             );
           }
+        }
 
-          const listUnitPrice = roundMoney(Number(product.selling_price));
-          const costPrice = roundMoney(Number(product.cost_price));
-          const listLineTotal = roundMoney(listUnitPrice * quantity);
-          let unitPrice = listUnitPrice;
-          let lineTotal: number;
-          let discountAmount: number;
-          let roundingAmount = 0;
-          let negotiationMode: "unit" | "total" | null = null;
+        for (const requested of requestedLines) {
+          const product = productsById.get(requested.productId)!;
+          const priced = priceCartLine(
+            {
+              name: product.name,
+              costPrice: Number(product.cost_price),
+              sellingPrice: Number(product.selling_price),
+              unit: product.unit,
+            },
+            requested,
+            scaleRounding,
+          );
 
-          if (requested.negotiatedTotal !== null) {
-            if (requested.negotiatedTotal > listLineTotal) {
-              throw new AppError(
-                400,
-                `Total nego "${product.name}" tidak boleh melebihi harga normal (${formatRupiah(listLineTotal)}).`,
-                { code: "PRICE_ABOVE_LIST" },
-              );
-            }
-
-            const costLineTotal = roundMoney(costPrice * quantity);
-            if (costPrice > 0 && requested.negotiatedTotal < costLineTotal) {
-              throw new AppError(
-                400,
-                `Total nego "${product.name}" di bawah harga modal (${formatRupiah(costLineTotal)}).`,
-                { code: "PRICE_BELOW_COST" },
-              );
-            }
-
-            lineTotal = requested.negotiatedTotal;
-            unitPrice = Math.min(listUnitPrice, roundMoney(lineTotal / quantity));
-            discountAmount = roundMoney(listLineTotal - lineTotal);
-            negotiationMode = lineTotal < listLineTotal ? "total" : null;
-          } else {
-            if (requested.unitPrice !== null) {
-              if (requested.unitPrice > listUnitPrice) {
-                throw new AppError(
-                  400,
-                  `Harga nego "${product.name}" tidak boleh melebihi harga normal (${formatRupiah(listUnitPrice)}).`,
-                  { code: "PRICE_ABOVE_LIST" },
-                );
-              }
-
-              if (costPrice > 0 && requested.unitPrice < costPrice) {
-                throw new AppError(
-                  400,
-                  `Harga nego "${product.name}" di bawah harga modal (${formatRupiah(costPrice)}).`,
-                  { code: "PRICE_BELOW_COST" },
-                );
-              }
-
-              unitPrice = requested.unitPrice;
-            }
-
-            const exactLineTotal = roundMoney(unitPrice * quantity);
-            discountAmount = roundMoney(listLineTotal - exactLineTotal);
-            roundingAmount =
-              requested.unitPrice === null && scaleRounding > 0 && isScaleUnit(product.unit)
-                ? roundMoney(roundToScaleStep(exactLineTotal, scaleRounding) - exactLineTotal)
-                : 0;
-            lineTotal = roundMoney(exactLineTotal + roundingAmount);
-            negotiationMode = requested.unitPrice !== null && unitPrice < listUnitPrice ? "unit" : null;
-          }
-
-          if (listLineTotal > 999_999_999_999.99 || lineTotal > 999_999_999_999.99) {
-            throw new AppError(400, "Total item melebihi batas maksimum transaksi.");
-          }
-
-          subtotal = roundMoney(subtotal + listLineTotal);
-          discountTotal = roundMoney(discountTotal + discountAmount);
-          roundingTotal = roundMoney(roundingTotal + roundingAmount);
+          subtotal = roundMoney(subtotal + priced.listLineTotal);
+          discountTotal = roundMoney(discountTotal + priced.discountAmount);
+          roundingTotal = roundMoney(roundingTotal + priced.roundingAmount);
           saleItems.push({
             product,
-            quantity,
-            listUnitPrice,
-            unitPrice,
-            listLineTotal,
-            discountAmount,
-            roundingAmount,
-            negotiationMode,
-            lineTotal,
+            quantity: requested.quantity,
+            ...priced,
           });
         }
 
@@ -466,20 +427,13 @@ transactionsRouter.post(
         );
         const transactionId = transactionResult.rows[0].id;
 
-        for (const item of saleItems) {
-          const previousStock = roundQuantity(Number(item.product.stock));
-          const currentStock = roundQuantity(previousStock - item.quantity);
-
-          await client.query("UPDATE products SET stock = $1 WHERE id = $2", [
-            currentStock.toFixed(3),
-            item.product.id,
-          ]);
-
+        for (const [index, item] of saleItems.entries()) {
           await client.query(
             `INSERT INTO transaction_items
                (transaction_id, product_id, product_name, unit, quantity, list_unit_price,
-                unit_price, unit_cost, discount_amount, rounding_amount, negotiation_mode, line_total)
-             VALUES ($1, $2, $3, $4, $5, $6, $7, $8, $9, $10, $11, $12)`,
+                unit_price, unit_cost, discount_amount, rounding_amount, negotiation_mode,
+                line_total, line_number)
+             VALUES ($1, $2, $3, $4, $5, $6, $7, $8, $9, $10, $11, $12, $13)`,
             [
               transactionId,
               item.product.id,
@@ -493,8 +447,31 @@ transactionsRouter.post(
               item.roundingAmount.toFixed(2),
               item.negotiationMode,
               item.lineTotal.toFixed(2),
+              index + 1,
             ],
           );
+        }
+
+        // Stok dan movement dicatat sekali per produk meskipun produk muncul
+        // di beberapa baris dengan jumlah atau nego yang berbeda.
+        const soldQuantityByProduct = new Map<string, number>();
+        for (const item of saleItems) {
+          soldQuantityByProduct.set(
+            item.product.id,
+            roundQuantity((soldQuantityByProduct.get(item.product.id) ?? 0) + item.quantity),
+          );
+        }
+
+        for (const productId of productIds) {
+          const product = productsById.get(productId)!;
+          const soldQuantity = soldQuantityByProduct.get(productId)!;
+          const previousStock = roundQuantity(Number(product.stock));
+          const currentStock = roundQuantity(previousStock - soldQuantity);
+
+          await client.query("UPDATE products SET stock = $1 WHERE id = $2", [
+            currentStock.toFixed(3),
+            productId,
+          ]);
 
           await client.query(
             `INSERT INTO stock_movements
@@ -502,10 +479,10 @@ transactionsRouter.post(
                 previous_stock, current_stock, notes)
              VALUES ($1, $2, $3, 'sale', $4, $5, $6, $7)`,
             [
-              item.product.id,
+              productId,
               user.id,
               transactionId,
-              item.quantity.toFixed(3),
+              soldQuantity.toFixed(3),
               previousStock.toFixed(3),
               currentStock.toFixed(3),
               `Penjualan ${invoiceNumber}`,
@@ -546,6 +523,164 @@ transactionsRouter.post(
       }
       throw error;
     }
+  }),
+);
+
+transactionsRouter.post(
+  "/:id/void",
+  requireOwner,
+  asyncHandler(async (req, res) => {
+    const user = currentUser(req);
+    const id = parseId(req.params.id);
+    const body = voidTransactionInputSchema.parse(req.body);
+
+    const outcome = await withTransaction(async (client) => {
+      const lookup = await client.query<{ cash_session_id: string | null }>(
+        "SELECT cash_session_id FROM transactions WHERE id = $1",
+        [id],
+      );
+      if (!lookup.rows[0]) {
+        throw new AppError(404, "Transaksi tidak ditemukan.");
+      }
+      const cashSessionId = lookup.rows[0].cash_session_id;
+      if (!cashSessionId) {
+        throw new AppError(409, "Transaksi ini tidak terhubung ke sesi kas.", {
+          code: "CASH_SESSION_MISSING",
+        });
+      }
+
+      // FOR SHARE menahan proses tutup kas sampai pembatalan selesai. Dengan
+      // begitu koreksi stok dan status transaksi selalu masuk ke sesi terbuka.
+      const sessionResult = await client.query<{ status: "open" | "closed" }>(
+        "SELECT status FROM cash_sessions WHERE id = $1 FOR SHARE",
+        [cashSessionId],
+      );
+      if (sessionResult.rows[0]?.status !== "open") {
+        throw new AppError(
+          409,
+          "Transaksi hanya bisa dibatalkan atau diretur selama sesi kas masih terbuka.",
+          { code: "CASH_SESSION_CLOSED" },
+        );
+      }
+
+      const transactionResult = await client.query<{
+        id: string;
+        invoice_number: string;
+        status: "completed" | "voided";
+      }>(
+        `SELECT id, invoice_number, status
+         FROM transactions
+         WHERE id = $1
+         FOR UPDATE`,
+        [id],
+      );
+      const transaction = transactionResult.rows[0];
+      if (!transaction) {
+        throw new AppError(404, "Transaksi tidak ditemukan.");
+      }
+      if (transaction.status === "voided") {
+        throw new AppError(409, "Transaksi ini sudah dibatalkan atau diretur.", {
+          code: "TRANSACTION_ALREADY_VOIDED",
+        });
+      }
+
+      const itemsResult = await client.query<{ product_id: string; quantity: number }>(
+        `SELECT product_id, quantity
+         FROM transaction_items
+         WHERE transaction_id = $1
+         ORDER BY line_number ASC`,
+        [id],
+      );
+
+      const quantityByProduct = new Map<string, number>();
+      for (const item of itemsResult.rows) {
+        quantityByProduct.set(
+          item.product_id,
+          roundQuantity((quantityByProduct.get(item.product_id) ?? 0) + Number(item.quantity)),
+        );
+      }
+      const productIds = Array.from(quantityByProduct.keys()).sort();
+
+      const productsResult = await client.query<{ id: string; name: string; stock: number }>(
+        `SELECT id, name, stock
+         FROM products
+         WHERE id = ANY($1::uuid[])
+         ORDER BY id
+         FOR UPDATE`,
+        [productIds],
+      );
+      if (productsResult.rows.length !== productIds.length) {
+        throw new AppError(409, "Beberapa produk pada transaksi ini sudah tidak tersedia.", {
+          code: "PRODUCT_MISSING",
+        });
+      }
+      const productsById = new Map(productsResult.rows.map((product) => [product.id, product]));
+      const movementLabel = body.type === "return" ? "Retur" : "Pembatalan";
+
+      for (const productId of productIds) {
+        const product = productsById.get(productId)!;
+        const restoreQuantity = quantityByProduct.get(productId)!;
+        const previousStock = roundQuantity(Number(product.stock));
+        const currentStock = roundQuantity(previousStock + restoreQuantity);
+
+        await client.query("UPDATE products SET stock = $1 WHERE id = $2", [
+          currentStock.toFixed(3),
+          productId,
+        ]);
+
+        await client.query(
+          `INSERT INTO stock_movements
+             (product_id, user_id, transaction_id, movement_type, quantity,
+              previous_stock, current_stock, notes)
+           VALUES ($1, $2, $3, 'void', $4, $5, $6, $7)`,
+          [
+            productId,
+            user.id,
+            id,
+            restoreQuantity.toFixed(3),
+            previousStock.toFixed(3),
+            currentStock.toFixed(3),
+            `${movementLabel} ${transaction.invoice_number}`,
+          ],
+        );
+      }
+
+      await client.query(
+        `UPDATE transactions
+         SET status = 'voided',
+             void_type = $1,
+             void_reason = $2,
+             voided_by = $3,
+             voided_at = NOW()
+         WHERE id = $4`,
+        [body.type, body.reason, user.id, id],
+      );
+
+      return {
+        id,
+        invoiceNumber: transaction.invoice_number,
+        type: body.type,
+      };
+    });
+
+    const transaction = await getTransactionDetailById(outcome.id);
+    if (!transaction) {
+      throw new AppError(500, "Pembatalan tersimpan tetapi data gagal dimuat.");
+    }
+
+    emitEvent("transaction.voided", {
+      id: transaction.id,
+      voidType: outcome.type,
+    });
+    emitEvent("stock.adjusted", { transactionId: transaction.id, source: outcome.type });
+
+    res.json({
+      transaction,
+      message:
+        outcome.type === "return"
+          ? `Retur ${outcome.invoiceNumber} dicatat dan stok sudah dikembalikan.`
+          : `Transaksi ${outcome.invoiceNumber} dibatalkan dan stok sudah dikembalikan.`,
+    });
   }),
 );
 
