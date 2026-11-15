@@ -92,6 +92,7 @@
   #receipt-print-area .receipt__item-name,
   #receipt-print-area .receipt__item-detail,
   #receipt-print-area .receipt__item-discount,
+  #receipt-print-area .receipt__item-rounding,
   #receipt-print-area .receipt__totals > div,
   #receipt-print-area .receipt__notes {
     font-size: 8.5pt !important;

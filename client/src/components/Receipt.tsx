@@ -5,6 +5,7 @@ import {
   formatMoney,
   formatPaymentMethod,
   formatQuantity,
+  formatSignedMoney,
 } from "../lib/utils";
 import { Button, Modal } from "./ui";
 
@@ -58,6 +59,12 @@ export function Receipt({ transaction }: { transaction: TransactionDetail }) {
                 <span>−{formatMoney(item.discountAmount)}</span>
               </div>
             )}
+            {item.roundingAmount !== 0 && (
+              <div className="receipt__item-rounding">
+                <span>Pembulatan timbangan</span>
+                <span>{formatSignedMoney(item.roundingAmount)}</span>
+              </div>
+            )}
           </div>
         ))}
       </div>
@@ -73,6 +80,12 @@ export function Receipt({ transaction }: { transaction: TransactionDetail }) {
           <div className="receipt__discount-row">
             <span>Diskon nego</span>
             <span>−{formatMoney(transaction.discountTotal)}</span>
+          </div>
+        )}
+        {transaction.roundingTotal !== 0 && (
+          <div className="receipt__rounding-row">
+            <span>Pembulatan timbangan</span>
+            <span>{formatSignedMoney(transaction.roundingTotal)}</span>
           </div>
         )}
         <div className="receipt__total-row">

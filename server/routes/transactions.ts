@@ -5,6 +5,7 @@ import { config } from "../config";
 import { currentUser, requireAuth, requireCashier } from "../lib/auth";
 import { asyncHandler, AppError } from "../lib/http";
 import { emitEvent } from "../lib/realtime";
+import { isScaleUnit, roundToScaleStep } from "../lib/rounding";
 import { getStore } from "../lib/store";
 import {
   mapTransactionSummary,
@@ -42,6 +43,7 @@ interface TransactionItemRow {
   list_unit_price: number;
   unit_price: number;
   discount_amount: number;
+  rounding_amount: number;
   line_total: number;
 }
 
@@ -68,7 +70,7 @@ function formatRupiah(value: number): string {
 async function getTransactionDetailById(id: string): Promise<TransactionDetailDto | null> {
   const result = await pool.query<TransactionDetailRow>(
     `SELECT t.id, t.invoice_number, t.cashier_id, u.name AS cashier_name,
-            t.subtotal, t.discount_total, t.discount_reason, t.total,
+            t.subtotal, t.discount_total, t.discount_reason, t.rounding_total, t.total,
             t.payment_method, t.amount_paid, t.change_due, t.notes, t.created_at,
             (SELECT COUNT(*)::int FROM transaction_items ti WHERE ti.transaction_id = t.id) AS item_count
      FROM transactions t
@@ -81,7 +83,7 @@ async function getTransactionDetailById(id: string): Promise<TransactionDetailDt
 
   const itemsResult = await pool.query<TransactionItemRow>(
     `SELECT id, product_id, product_name, unit, quantity, list_unit_price,
-            unit_price, discount_amount, line_total
+            unit_price, discount_amount, rounding_amount, line_total
      FROM transaction_items
      WHERE transaction_id = $1
      ORDER BY created_at ASC, id ASC`,
@@ -91,6 +93,7 @@ async function getTransactionDetailById(id: string): Promise<TransactionDetailDt
   const items: TransactionItemDto[] = itemsResult.rows.map((item) => {
     const lineTotal = Number(item.line_total);
     const discountAmount = Number(item.discount_amount);
+    const roundingAmount = Number(item.rounding_amount);
     return {
       id: item.id,
       productId: item.product_id,
@@ -99,8 +102,9 @@ async function getTransactionDetailById(id: string): Promise<TransactionDetailDt
       quantity: Number(item.quantity),
       listUnitPrice: Number(item.list_unit_price),
       unitPrice: Number(item.unit_price),
-      listLineTotal: roundMoney(lineTotal + discountAmount),
+      listLineTotal: roundMoney(lineTotal - roundingAmount + discountAmount),
       discountAmount,
+      roundingAmount,
       lineTotal,
     };
   });
@@ -177,7 +181,7 @@ transactionsRouter.get(
     const listValues = [...values, query.limit, offset];
     const result = await pool.query<TransactionSummaryRow>(
       `SELECT t.id, t.invoice_number, t.cashier_id, u.name AS cashier_name,
-              t.total, t.discount_total, t.payment_method, t.created_at,
+              t.total, t.discount_total, t.rounding_total, t.payment_method, t.created_at,
               (SELECT COUNT(*)::int FROM transaction_items ti WHERE ti.transaction_id = t.id) AS item_count
        FROM transactions t
        JOIN users u ON u.id = t.cashier_id
@@ -272,6 +276,12 @@ transactionsRouter.post(
           });
         }
 
+        // Kunci baris pengaturan agar nominal pembulatan tidak berubah di tengah transaksi.
+        const settingsResult = await client.query<{ scale_rounding: number }>(
+          "SELECT scale_rounding FROM store_settings WHERE id = 1 FOR SHARE",
+        );
+        const scaleRounding = Number(settingsResult.rows[0]?.scale_rounding ?? 0);
+
         const productsResult = await client.query<LockedProductRow>(
           `SELECT id, name, cost_price, selling_price, stock, unit, is_active
            FROM products
@@ -293,11 +303,13 @@ transactionsRouter.post(
           unitPrice: number;
           listLineTotal: number;
           discountAmount: number;
+          roundingAmount: number;
           lineTotal: number;
         }> = [];
 
         let subtotal = 0;
         let discountTotal = 0;
+        let roundingTotal = 0;
         for (const productId of productIds) {
           const product = productsById.get(productId)!;
           const requested = requestedItems.get(productId)!;
@@ -339,14 +351,21 @@ transactionsRouter.post(
           }
 
           const listLineTotal = roundMoney(listUnitPrice * quantity);
-          const lineTotal = roundMoney(unitPrice * quantity);
-          const discountAmount = roundMoney(listLineTotal - lineTotal);
-          if (listLineTotal > 999_999_999_999.99) {
+          const exactLineTotal = roundMoney(unitPrice * quantity);
+          const discountAmount = roundMoney(listLineTotal - exactLineTotal);
+          const roundingAmount =
+            requested.unitPrice === null && scaleRounding > 0 && isScaleUnit(product.unit)
+              ? roundMoney(roundToScaleStep(exactLineTotal, scaleRounding) - exactLineTotal)
+              : 0;
+          const lineTotal = roundMoney(exactLineTotal + roundingAmount);
+
+          if (listLineTotal > 999_999_999_999.99 || lineTotal > 999_999_999_999.99) {
             throw new AppError(400, "Total item melebihi batas maksimum transaksi.");
           }
 
           subtotal = roundMoney(subtotal + listLineTotal);
           discountTotal = roundMoney(discountTotal + discountAmount);
+          roundingTotal = roundMoney(roundingTotal + roundingAmount);
           saleItems.push({
             product,
             quantity,
@@ -354,11 +373,12 @@ transactionsRouter.post(
             unitPrice,
             listLineTotal,
             discountAmount,
+            roundingAmount,
             lineTotal,
           });
         }
 
-        const total = roundMoney(subtotal - discountTotal);
+        const total = roundMoney(subtotal - discountTotal + roundingTotal);
         if (subtotal > 999_999_999_999.99 || total > 999_999_999_999.99) {
           throw new AppError(400, "Total transaksi melebihi batas maksimum.");
         }
@@ -382,8 +402,9 @@ transactionsRouter.post(
         const transactionResult = await client.query<{ id: string }>(
           `INSERT INTO transactions
              (invoice_number, cashier_id, subtotal, total, discount_total, discount_reason,
-              payment_method, amount_paid, change_due, notes, client_reference, cash_session_id)
-           VALUES ($1, $2, $3, $4, $5, $6, $7, $8, $9, $10, $11, $12)
+              rounding_total, payment_method, amount_paid, change_due, notes, client_reference,
+              cash_session_id)
+           VALUES ($1, $2, $3, $4, $5, $6, $7, $8, $9, $10, $11, $12, $13)
            RETURNING id`,
           [
             invoiceNumber,
@@ -392,6 +413,7 @@ transactionsRouter.post(
             total.toFixed(2),
             discountTotal.toFixed(2),
             discountReason,
+            roundingTotal.toFixed(2),
             body.paymentMethod,
             paymentAmount.toFixed(2),
             changeDue.toFixed(2),
@@ -414,8 +436,8 @@ transactionsRouter.post(
           await client.query(
             `INSERT INTO transaction_items
                (transaction_id, product_id, product_name, unit, quantity, list_unit_price,
-                unit_price, unit_cost, discount_amount, line_total)
-             VALUES ($1, $2, $3, $4, $5, $6, $7, $8, $9, $10)`,
+                unit_price, unit_cost, discount_amount, rounding_amount, line_total)
+             VALUES ($1, $2, $3, $4, $5, $6, $7, $8, $9, $10, $11)`,
             [
               transactionId,
               item.product.id,
@@ -426,6 +448,7 @@ transactionsRouter.post(
               item.unitPrice.toFixed(2),
               Number(item.product.cost_price).toFixed(2),
               item.discountAmount.toFixed(2),
+              item.roundingAmount.toFixed(2),
               item.lineTotal.toFixed(2),
             ],
           );

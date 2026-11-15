@@ -17,6 +17,7 @@ const defaultStore: Store = {
   storeAddress: null,
   storePhone: null,
   receiptFooter: "Terima kasih telah berbelanja.",
+  scaleRounding: 1000,
 };
 
 const AuthContext = createContext<AuthContextValue | null>(null);

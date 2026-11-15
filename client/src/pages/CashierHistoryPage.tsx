@@ -8,6 +8,7 @@ import {
   formatDateTime,
   formatMoney,
   formatPaymentMethod,
+  formatSignedMoney,
   getErrorMessage,
   todayInputValue,
 } from "../lib/utils";
@@ -211,6 +212,11 @@ export function CashierHistoryPage() {
                     {transaction.discountTotal > 0 && (
                       <span className="cashier-transaction-card__discount">
                         Hemat {formatMoney(transaction.discountTotal)}
+                      </span>
+                    )}
+                    {transaction.roundingTotal !== 0 && (
+                      <span className="cashier-transaction-card__rounding">
+                        Bulat {formatSignedMoney(transaction.roundingTotal)}
                       </span>
                     )}
                   </div>

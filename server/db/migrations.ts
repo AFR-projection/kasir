@@ -300,10 +300,39 @@ const allowNegativeExpectedCash: Migration = {
   `,
 };
 
+const scaleRoundingSchema: Migration = {
+  name: "006_scale_rounding",
+  sql: `
+    -- Timbangan buah digital membulatkan total ke rupiah penuh terdekat.
+    ALTER TABLE store_settings
+      ADD COLUMN scale_rounding SMALLINT NOT NULL DEFAULT 1000,
+      ADD CONSTRAINT store_settings_scale_rounding_check
+        CHECK (scale_rounding IN (0, 100, 500, 1000));
+
+    ALTER TABLE transactions
+      ADD COLUMN rounding_total NUMERIC(14, 2) NOT NULL DEFAULT 0;
+
+    ALTER TABLE transaction_items
+      ADD COLUMN rounding_amount NUMERIC(14, 2) NOT NULL DEFAULT 0;
+
+    ALTER TABLE transactions
+      DROP CONSTRAINT IF EXISTS transactions_total_consistency_check;
+
+    ALTER TABLE transactions
+      ADD CONSTRAINT transactions_total_consistency_check
+        CHECK (total = subtotal - discount_total + rounding_total);
+
+    CREATE INDEX transactions_rounding_idx
+      ON transactions (created_at DESC)
+      WHERE rounding_total <> 0;
+  `,
+};
+
 export const migrations: Migration[] = [
   initialSchema,
   cashSessionsSchema,
   priceNegotiationSchema,
   cashExpensesSchema,
   allowNegativeExpectedCash,
+  scaleRoundingSchema,
 ];

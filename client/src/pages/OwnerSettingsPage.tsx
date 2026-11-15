@@ -10,6 +10,7 @@ import {
   Phone,
   ReceiptText,
   Save,
+  Scale,
   ShieldCheck,
   Store as StoreIcon,
   UserRound,
@@ -17,22 +18,34 @@ import {
 import { api } from "../lib/api";
 import { useAuth } from "../context/AuthContext";
 import { useToast } from "../context/ToastContext";
-import { getErrorMessage } from "../lib/utils";
+import {
+  formatMoney,
+  formatSignedMoney,
+  getErrorMessage,
+  roundMoneyValue,
+  roundToScaleStepValue,
+  scaleRoundingOptions,
+} from "../lib/utils";
 import type { Store, TransactionDetail } from "../types";
 import { Button, Field, PageHeader } from "../components/ui";
 import { Receipt } from "../components/Receipt";
+
+const sampleListLineTotal = 18_375;
+const sampleSubtotal = 24_000 + sampleListLineTotal;
+const sampleDiscountTotal = 4_000;
 
 const sampleReceipt: TransactionDetail = {
   id: "preview",
   invoiceNumber: "TRX-00000000-00001",
   cashierId: "preview",
   cashierName: "Contoh Kasir",
-  subtotal: 39000,
-  discountTotal: 4000,
-  total: 35000,
+  subtotal: sampleSubtotal,
+  discountTotal: sampleDiscountTotal,
+  roundingTotal: -375,
+  total: sampleSubtotal - sampleDiscountTotal - 375,
   paymentMethod: "cash",
   amountPaid: 50000,
-  changeDue: 15000,
+  changeDue: 50000 - (sampleSubtotal - sampleDiscountTotal - 375),
   notes: null,
   discountReason: "Contoh nego pelanggan",
   itemCount: 2,
@@ -48,19 +61,21 @@ const sampleReceipt: TransactionDetail = {
       unitPrice: 10000,
       listLineTotal: 24000,
       discountAmount: 4000,
+      roundingAmount: 0,
       lineTotal: 20000,
     },
     {
       id: "preview-item-2",
       productId: "preview-product-2",
-      productName: "Contoh Produk B",
+      productName: "Contoh Buah Naga",
       unit: "kg",
-      quantity: 1,
+      quantity: 1.225,
       listUnitPrice: 15000,
       unitPrice: 15000,
-      listLineTotal: 15000,
+      listLineTotal: sampleListLineTotal,
       discountAmount: 0,
-      lineTotal: 15000,
+      roundingAmount: -375,
+      lineTotal: sampleListLineTotal - 375,
     },
   ],
   store: {
@@ -68,6 +83,7 @@ const sampleReceipt: TransactionDetail = {
     storeAddress: null,
     storePhone: null,
     receiptFooter: "Terima kasih telah berbelanja.",
+    scaleRounding: 1000,
   },
 };
 
@@ -82,6 +98,8 @@ export function OwnerSettingsPage() {
     receiptFooter: store.receiptFooter || "",
   });
   const [storeSaving, setStoreSaving] = useState(false);
+  const [scaleRounding, setScaleRounding] = useState(store.scaleRounding);
+  const [roundingSaving, setRoundingSaving] = useState(false);
   const [profileForm, setProfileForm] = useState({ name: user?.name || "", email: user?.email || "" });
   const [profileSaving, setProfileSaving] = useState(false);
   const [passwordForm, setPasswordForm] = useState({
@@ -100,6 +118,7 @@ export function OwnerSettingsPage() {
       storePhone: store.storePhone || "",
       receiptFooter: store.receiptFooter || "",
     });
+    setScaleRounding(store.scaleRounding);
   }, [store]);
 
   useEffect(() => {
@@ -137,6 +156,31 @@ export function OwnerSettingsPage() {
       setErrors((current) => ({ ...current, storeForm: getErrorMessage(error) }));
     } finally {
       setStoreSaving(false);
+    }
+  };
+
+  const handleRoundingSubmit = async (event: FormEvent) => {
+    event.preventDefault();
+    setRoundingSaving(true);
+    setErrors((current) => ({ ...current, roundingForm: "" }));
+    try {
+      const result = await api.settings.update({
+        storeName: store.storeName,
+        storeAddress: store.storeAddress,
+        storePhone: store.storePhone,
+        receiptFooter: store.receiptFooter,
+        scaleRounding,
+      });
+      queryClient.setQueryData(
+        ["auth", "me"],
+        (previous: { user: typeof user; store: Store } | undefined) =>
+          previous ? { ...previous, store: result.store } : previous,
+      );
+      toast.success("Pembulatan timbangan berhasil disimpan.");
+    } catch (error) {
+      setErrors((current) => ({ ...current, roundingForm: getErrorMessage(error) }));
+    } finally {
+      setRoundingSaving(false);
     }
   };
 
@@ -200,6 +244,29 @@ export function OwnerSettingsPage() {
     storeAddress: storeForm.storeAddress || null,
     storePhone: storeForm.storePhone || null,
     receiptFooter: storeForm.receiptFooter || null,
+    scaleRounding,
+  };
+
+  const sampleRoundingAmount =
+    scaleRounding > 0
+      ? roundMoneyValue(roundToScaleStepValue(sampleListLineTotal, scaleRounding) - sampleListLineTotal)
+      : 0;
+  const sampleTotal = roundMoneyValue(sampleSubtotal - sampleDiscountTotal + sampleRoundingAmount);
+  const previewTransaction: TransactionDetail = {
+    ...sampleReceipt,
+    subtotal: sampleSubtotal,
+    roundingTotal: sampleRoundingAmount,
+    total: sampleTotal,
+    changeDue: roundMoneyValue(sampleReceipt.amountPaid - sampleTotal),
+    items: [
+      sampleReceipt.items[0],
+      {
+        ...sampleReceipt.items[1],
+        roundingAmount: sampleRoundingAmount,
+        lineTotal: roundMoneyValue(sampleListLineTotal + sampleRoundingAmount),
+      },
+    ],
+    store: previewStore,
   };
 
   return (
@@ -292,6 +359,77 @@ export function OwnerSettingsPage() {
           <section className="panel">
             <div className="panel__header">
               <div>
+                <p className="panel__eyebrow">Operasional timbangan</p>
+                <h2>Pembulatan Timbangan</h2>
+              </div>
+              <span className="panel__icon">
+                <Scale size={19} />
+              </span>
+            </div>
+            <p className="panel__description">
+              Samakan aplikasi dengan timbangan buah digital. Pembulatan berlaku untuk produk satuan kg dan gram
+              dengan harga normal; harga nego tetap dihitung presisi.
+            </p>
+
+            <form onSubmit={handleRoundingSubmit} className="form-stack" noValidate>
+              <Field
+                label="Bulatkan total item ke"
+                htmlFor="settings-scale-rounding"
+                hint="Pilih sesuai layar timbangan. Contoh: 1,225 kg × Rp15.000 = Rp18.375 menjadi Rp18.000."
+              >
+                <select
+                  id="settings-scale-rounding"
+                  className="select"
+                  value={scaleRounding}
+                  onChange={(event) => {
+                    setScaleRounding(Number(event.target.value));
+                    setErrors((current) => ({ ...current, roundingForm: "" }));
+                  }}
+                >
+                  {scaleRoundingOptions.map((option) => (
+                    <option key={option.value} value={option.value}>
+                      {option.label}
+                    </option>
+                  ))}
+                </select>
+              </Field>
+
+              <div className="scale-rounding-example">
+                <div>
+                  <span>1,225 kg × Rp15.000</span>
+                  <strong>{formatMoney(sampleListLineTotal)}</strong>
+                </div>
+                <div className="scale-rounding-example__result">
+                  <span>Dibulatkan</span>
+                  <strong>{formatMoney(roundMoneyValue(sampleListLineTotal + sampleRoundingAmount))}</strong>
+                </div>
+                <p>
+                  {scaleRounding > 0 ? (
+                    <>
+                      Selisih <b>{formatSignedMoney(sampleRoundingAmount)}</b> dari harga presisi, tercatat
+                      terpisah di struk.
+                    </>
+                  ) : (
+                    "Pembulatan nonaktif. Aplikasi memakai harga presisi seperti kalkulator."
+                  )}
+                </p>
+              </div>
+
+              {errors.roundingForm && (
+                <div className="auth-alert auth-alert--error">{errors.roundingForm}</div>
+              )}
+
+              <div className="form-actions">
+                <Button type="submit" icon={<Scale size={17} />} loading={roundingSaving}>
+                  Simpan Pembulatan
+                </Button>
+              </div>
+            </form>
+          </section>
+
+          <section className="panel">
+            <div className="panel__header">
+              <div>
                 <p className="panel__eyebrow">Tampilan cetak</p>
                 <h2>Pratinjau Struk</h2>
               </div>
@@ -299,9 +437,9 @@ export function OwnerSettingsPage() {
                 <ReceiptText size={19} />
               </span>
             </div>
-            <p className="panel__description">Perubahan nama, alamat, telepon, dan pesan penutup langsung terlihat di pratinjau ini.</p>
+            <p className="panel__description">Perubahan nama, alamat, telepon, pesan penutup, dan pembulatan langsung terlihat di pratinjau ini.</p>
             <div className="receipt-preview">
-              <Receipt transaction={{ ...sampleReceipt, store: previewStore }} />
+              <Receipt transaction={previewTransaction} />
             </div>
           </section>
         </div>

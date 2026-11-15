@@ -19,6 +19,7 @@ export interface Store {
   storeAddress: string | null;
   storePhone: string | null;
   receiptFooter: string | null;
+  scaleRounding: number;
 }
 
 export interface AuthMeResponse {
@@ -152,6 +153,7 @@ export interface TransactionSummary {
   cashierName: string;
   total: number;
   discountTotal: number;
+  roundingTotal: number;
   paymentMethod: PaymentMethod;
   itemCount: number;
   createdAt: string;
@@ -167,6 +169,7 @@ export interface TransactionItem {
   unitPrice: number;
   listLineTotal: number;
   discountAmount: number;
+  roundingAmount: number;
   lineTotal: number;
 }
 
@@ -250,6 +253,7 @@ export interface StoreInput {
   storeAddress: string | null;
   storePhone: string | null;
   receiptFooter: string | null;
+  scaleRounding?: number;
 }
 
 export type CashSessionStatus = "open" | "closed";

@@ -18,6 +18,7 @@ Semua data disimpan di **Neon PostgreSQL**. Tidak ada data dummy atau penyimpana
 - Stok masuk/keluar dengan pencatatan `stock_movements` dan penolakan stok negatif.
 - **Sesi kas buka/tutup toko**: kasir mencatat uang awal laci, sistem menghitung uang laci seharusnya, lalu kasir menghitung fisik uang saat tutup kas. Selisih wajib dijelaskan.
 - Checkout atomik: penguncian baris produk, pengurangan stok, nomor invoice berurutan, dan snapshot harga/nama produk.
+- **Pembulatan timbangan buah**: produk kg/gram dengan harga normal dibulatkan otomatis sesuai setelan toko (tanpa pembulatan, Rp100, Rp500, atau Rp1.000 terdekat). Selisih dicatat per item dan ditampilkan di struk. Harga nego tetap presisi agar tidak melebihi kesepakatan.
 - Checkout diblokir selama kas belum dibuka atau sudah ditutup.
 - Idempotensi checkout melalui `clientReference` untuk mencegah transaksi ganda.
 - Real-time sync dengan SSE pada server biasa, dan polling otomatis pada Vercel/serverless.

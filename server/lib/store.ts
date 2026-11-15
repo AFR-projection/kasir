@@ -4,7 +4,7 @@ import { mapStore } from "./serializers";
 
 export async function getStore(client: Pick<typeof pool, "query"> = pool): Promise<StoreDto> {
   const result = await client.query<StoreRow>(
-    `SELECT store_name, store_address, store_phone, receipt_footer
+    `SELECT store_name, store_address, store_phone, receipt_footer, scale_rounding
      FROM store_settings WHERE id = 1`,
   );
   if (!result.rows[0]) {
@@ -13,6 +13,7 @@ export async function getStore(client: Pick<typeof pool, "query"> = pool): Promi
       storeAddress: null,
       storePhone: null,
       receiptFooter: "Terima kasih telah berbelanja.",
+      scaleRounding: 1000,
     };
   }
   return mapStore(result.rows[0]);

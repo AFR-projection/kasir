@@ -61,6 +61,7 @@ export interface TransactionSummaryDto {
   cashierName: string;
   total: number;
   discountTotal: number;
+  roundingTotal: number;
   paymentMethod: "cash" | "qris" | "debit" | "transfer";
   itemCount: number;
   createdAt: string;
@@ -76,6 +77,7 @@ export interface TransactionItemDto {
   unitPrice: number;
   listLineTotal: number;
   discountAmount: number;
+  roundingAmount: number;
   lineTotal: number;
 }
 
@@ -84,6 +86,7 @@ export interface StoreDto {
   storeAddress: string | null;
   storePhone: string | null;
   receiptFooter: string | null;
+  scaleRounding: number;
 }
 
 export interface TransactionDetailDto extends TransactionSummaryDto {
@@ -226,6 +229,7 @@ export interface TransactionSummaryRow {
   cashier_name: string;
   total: number;
   discount_total: number;
+  rounding_total: number;
   payment_method: "cash" | "qris" | "debit" | "transfer";
   item_count: number;
   created_at: Date | string;
@@ -239,6 +243,7 @@ export function mapTransactionSummary(row: TransactionSummaryRow): TransactionSu
     cashierName: row.cashier_name,
     total: Number(row.total),
     discountTotal: Number(row.discount_total),
+    roundingTotal: Number(row.rounding_total ?? 0),
     paymentMethod: row.payment_method,
     itemCount: Number(row.item_count),
     createdAt: iso(row.created_at)!,
@@ -250,6 +255,7 @@ export interface StoreRow {
   store_address: string | null;
   store_phone: string | null;
   receipt_footer: string | null;
+  scale_rounding: number;
 }
 
 export function mapStore(row: StoreRow): StoreDto {
@@ -258,5 +264,6 @@ export function mapStore(row: StoreRow): StoreDto {
     storeAddress: row.store_address,
     storePhone: row.store_phone,
     receiptFooter: row.receipt_footer,
+    scaleRounding: Number(row.scale_rounding ?? 1000),
   };
 }

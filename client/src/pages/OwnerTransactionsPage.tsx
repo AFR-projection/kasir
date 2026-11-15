@@ -10,6 +10,7 @@ import {
   formatMoney,
   formatMoneyCompact,
   formatPaymentMethod,
+  formatSignedMoney,
   getErrorMessage,
   todayInputValue,
 } from "../lib/utils";
@@ -259,6 +260,11 @@ export function OwnerTransactionsPage() {
                         {transaction.discountTotal > 0 && (
                           <span className="transaction-discount-note">
                             Nego −{formatMoney(transaction.discountTotal)}
+                          </span>
+                        )}
+                        {transaction.roundingTotal !== 0 && (
+                          <span className="transaction-discount-note transaction-rounding-note">
+                            Bulat {formatSignedMoney(transaction.roundingTotal)}
                           </span>
                         )}
                       </td>

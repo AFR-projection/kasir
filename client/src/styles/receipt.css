@@ -118,6 +118,20 @@
   white-space: nowrap;
 }
 
+.receipt__item-rounding {
+  display: flex;
+  justify-content: space-between;
+  gap: 10px;
+  margin-top: 1px;
+  color: #176143;
+  font-size: 8.5px;
+  line-height: 1.4;
+}
+
+.receipt__item-rounding span:last-child {
+  white-space: nowrap;
+}
+
 .receipt__totals {
   display: flex;
   flex-direction: column;
@@ -142,6 +156,16 @@
 }
 
 .receipt__discount-row {
+  padding-bottom: 2px;
+}
+
+.receipt__rounding-row,
+.receipt__rounding-row > span:first-child {
+  color: #176143 !important;
+  font-weight: 600;
+}
+
+.receipt__rounding-row {
   padding-bottom: 2px;
 }
 

@@ -12,6 +12,7 @@ import {
   Plus,
   QrCode,
   RotateCcw,
+  Scale,
   SearchX,
   ShoppingBasket,
   ShoppingCart,
@@ -33,12 +34,16 @@ import {
   formatMoney,
   formatMoneyCompact,
   formatQuantity,
+  formatSignedMoney,
   getErrorMessage,
   isFractionalUnit,
+  isScaleUnit,
   quantityStep,
   roundMoneyValue,
   roundQuantityValue,
+  roundToScaleStepValue,
 } from "../lib/utils";
+import { useAuth } from "../context/AuthContext";
 import { useToast } from "../context/ToastContext";
 import {
   Badge,
@@ -69,6 +74,7 @@ interface CartView {
   listUnitPrice: number;
   unitPrice: number;
   listLineTotal: number;
+  roundingAmount: number;
   lineTotal: number;
   discountAmount: number;
   negotiated: boolean;
@@ -87,6 +93,7 @@ const paymentOptions: Array<{
 
 export function CashierPage() {
   const toast = useToast();
+  const { store } = useAuth();
   const queryClient = useQueryClient();
   const [search, setSearch] = useState("");
   const debouncedSearch = useDebouncedValue(search, 200);
@@ -151,6 +158,7 @@ export function CashierPage() {
             listUnitPrice: 0,
             unitPrice: 0,
             listLineTotal: 0,
+            roundingAmount: 0,
             lineTotal: 0,
             discountAmount: 0,
             negotiated: false,
@@ -163,7 +171,13 @@ export function CashierPage() {
           ? roundMoneyValue(Math.min(listUnitPrice, Math.max(0, line.negotiatedPrice ?? 0)))
           : listUnitPrice;
         const listLineTotal = roundMoneyValue(listUnitPrice * line.quantity);
-        const lineTotal = roundMoneyValue(unitPrice * line.quantity);
+        const exactLineTotal = roundMoneyValue(unitPrice * line.quantity);
+        const discountAmount = roundMoneyValue(listLineTotal - exactLineTotal);
+        const roundingAmount =
+          !hasNegotiatedPrice && store.scaleRounding > 0 && isScaleUnit(product.unit)
+            ? roundMoneyValue(roundToScaleStepValue(exactLineTotal, store.scaleRounding) - exactLineTotal)
+            : 0;
+        const lineTotal = roundMoneyValue(exactLineTotal + roundingAmount);
 
         return {
           productId: line.productId,
@@ -172,17 +186,19 @@ export function CashierPage() {
           listUnitPrice,
           unitPrice,
           listLineTotal,
+          roundingAmount,
           lineTotal,
-          discountAmount: roundMoneyValue(listLineTotal - lineTotal),
+          discountAmount,
           negotiated: unitPrice < listUnitPrice,
         };
       }),
-    [cart, productsById],
+    [cart, productsById, store.scaleRounding],
   );
 
   const subtotal = roundMoneyValue(cartView.reduce((sum, item) => sum + item.listLineTotal, 0));
   const discountTotal = roundMoneyValue(cartView.reduce((sum, item) => sum + item.discountAmount, 0));
-  const total = roundMoneyValue(subtotal - discountTotal);
+  const roundingTotal = roundMoneyValue(cartView.reduce((sum, item) => sum + item.roundingAmount, 0));
+  const total = roundMoneyValue(subtotal - discountTotal + roundingTotal);
   const totalQuantity = roundQuantityValue(cartView.reduce((sum, item) => sum + item.quantity, 0));
   const negotiatingLine =
     cartView.find((line) => line.productId === negotiatingProductId) ?? null;
@@ -603,6 +619,12 @@ export function CashierPage() {
                       </span>
                     </div>
 
+                    {line.roundingAmount !== 0 && (
+                      <p className="cart-line__rounding">
+                        Pembulatan timbangan <strong>{formatSignedMoney(line.roundingAmount)}</strong>
+                      </p>
+                    )}
+
                     {overStock && (
                       <p className="cart-line__warning">
                         Melebihi stok tersisa ({formatQuantity(product.stock)} {product.unit}). Kurangi jumlah
@@ -628,17 +650,23 @@ export function CashierPage() {
               {formatQuantity(totalQuantity)} unit · {cartLineCount} produk
             </span>
           </div>
+          {(discountTotal > 0 || roundingTotal !== 0) && (
+            <div className="cart-summary-row">
+              <span>Harga normal</span>
+              <span>{formatMoney(subtotal)}</span>
+            </div>
+          )}
           {discountTotal > 0 && (
-            <>
-              <div className="cart-summary-row">
-                <span>Harga normal</span>
-                <span>{formatMoney(subtotal)}</span>
-              </div>
-              <div className="cart-summary-row cart-summary-row--discount">
-                <span>Diskon nego</span>
-                <span>−{formatMoney(discountTotal)}</span>
-              </div>
-            </>
+            <div className="cart-summary-row cart-summary-row--discount">
+              <span>Diskon nego</span>
+              <span>−{formatMoney(discountTotal)}</span>
+            </div>
+          )}
+          {roundingTotal !== 0 && (
+            <div className="cart-summary-row cart-summary-row--rounding">
+              <span>Pembulatan timbangan</span>
+              <span>{formatSignedMoney(roundingTotal)}</span>
+            </div>
           )}
           <div className="cart-summary-total">
             <span>Total</span>
@@ -682,6 +710,7 @@ export function CashierPage() {
           cart={cartView}
           subtotal={subtotal}
           discountTotal={discountTotal}
+          roundingTotal={roundingTotal}
           total={total}
           onClose={() => setPaymentOpen(false)}
           onSuccess={handlePaymentSuccess}
@@ -772,6 +801,7 @@ interface PaymentModalProps {
   cart: CartView[];
   subtotal: number;
   discountTotal: number;
+  roundingTotal: number;
   total: number;
   onClose: () => void;
   onSuccess: (transaction: TransactionDetail) => void;
@@ -940,6 +970,12 @@ function PriceNegotiationModal({ line, onClose, onApply }: PriceNegotiationModal
           <strong>{formatMoney(previewLineTotal)}</strong>
         </div>
 
+        {isScaleUnit(product.unit) && (
+          <p className="price-negotiation__note">
+            Harga nego dihitung presisi dan tidak ikut pembulatan timbangan.
+          </p>
+        )}
+
         {line.negotiated && (
           <button
             type="button"
@@ -961,6 +997,7 @@ function PaymentModal({
   cart,
   subtotal,
   discountTotal,
+  roundingTotal,
   total,
   onClose,
   onSuccess,
@@ -1075,11 +1112,31 @@ function PaymentModal({
           {discountTotal > 0 ? (
             <p>
               Harga normal <s>{formatMoney(subtotal)}</s> · Hemat {formatMoney(discountTotal)}
+              {roundingTotal !== 0 && <> · Bulat {formatSignedMoney(roundingTotal)}</>}
+            </p>
+          ) : roundingTotal !== 0 ? (
+            <p>
+              Harga normal {formatMoney(subtotal)} · Pembulatan {formatSignedMoney(roundingTotal)}
             </p>
           ) : (
             <p>{formatQuantity(totalItems)} unit dari {cart.length} produk</p>
           )}
         </div>
+
+        {roundingTotal !== 0 && (
+          <div className="payment-rounding-card">
+            <span className="payment-rounding-card__icon">
+              <Scale size={17} />
+            </span>
+            <div>
+              <strong>Pembulatan timbangan</strong>
+              <p>Total disesuaikan agar sama dengan layar timbangan buah.</p>
+            </div>
+            <span className="payment-rounding-card__amount">
+              {formatSignedMoney(roundingTotal)}
+            </span>
+          </div>
+        )}
 
         {negotiatedLines.length > 0 && (
           <div className="payment-negotiation-card">

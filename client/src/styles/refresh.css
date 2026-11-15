@@ -4727,3 +4727,132 @@ b {
     grid-template-columns: 1fr;
   }
 }
+
+/* Pembulatan timbangan buah */
+
+.cart-line__rounding {
+  display: flex;
+  flex-wrap: wrap;
+  gap: 4px;
+  margin-top: 3px;
+  color: var(--brand);
+  font-size: 10.5px;
+  line-height: 1.4;
+}
+
+.cart-line__rounding strong {
+  font-weight: 700;
+}
+
+.cart-summary-row--rounding span:last-child {
+  color: var(--brand);
+}
+
+.payment-rounding-card {
+  display: flex;
+  align-items: center;
+  gap: 11px;
+  padding: 12px 14px;
+  border: 1px solid #cfe3d8;
+  border-radius: 9px;
+  background: var(--brand-soft);
+}
+
+.payment-rounding-card__icon {
+  display: grid;
+  width: 34px;
+  height: 34px;
+  flex: 0 0 auto;
+  place-items: center;
+  border-radius: 9px;
+  color: var(--brand);
+  background: #ffffff;
+}
+
+.payment-rounding-card > div {
+  min-width: 0;
+  flex: 1;
+}
+
+.payment-rounding-card strong {
+  display: block;
+  color: var(--brand-deep);
+  font-size: 12px;
+}
+
+.payment-rounding-card p {
+  margin-top: 2px;
+  color: var(--muted);
+  font-size: 10.5px;
+  line-height: 1.45;
+}
+
+.payment-rounding-card__amount {
+  flex: 0 0 auto;
+  color: var(--brand-deep);
+  font-size: 13px;
+  font-weight: 800;
+  letter-spacing: -0.02em;
+  white-space: nowrap;
+}
+
+.price-negotiation__note {
+  margin-top: -2px;
+  padding: 0 2px;
+  color: var(--muted);
+  font-size: 10.5px;
+  line-height: 1.5;
+}
+
+.scale-rounding-example {
+  padding: 12px 14px;
+  border: 1px solid var(--line);
+  border-radius: 9px;
+  background: var(--surface-warm);
+}
+
+.scale-rounding-example > div {
+  display: flex;
+  justify-content: space-between;
+  gap: 12px;
+  color: var(--muted);
+  font-size: 11.5px;
+}
+
+.scale-rounding-example > div + div {
+  margin-top: 5px;
+  padding-top: 7px;
+  border-top: 1px dashed var(--line-strong);
+}
+
+.scale-rounding-example strong {
+  color: var(--ink);
+  font-weight: 700;
+  white-space: nowrap;
+}
+
+.scale-rounding-example__result strong {
+  color: var(--brand-deep);
+}
+
+.scale-rounding-example p {
+  margin-top: 7px;
+  color: var(--muted);
+  font-size: 10.5px;
+  line-height: 1.5;
+}
+
+.scale-rounding-example p b {
+  color: var(--brand);
+}
+
+.transaction-rounding-note {
+  color: var(--brand) !important;
+}
+
+.cashier-transaction-card__rounding {
+  color: var(--brand) !important;
+  font-size: 8.5px !important;
+  font-weight: 700;
+  white-space: nowrap;
+}

@@ -44,6 +44,11 @@ export function formatMoney(value: number): string {
   return Number.isInteger(safe) ? moneyFormatter.format(safe) : moneyDecimalFormatter.format(safe);
 }
 
+export function formatSignedMoney(value: number): string {
+  if (!Number.isFinite(value) || value === 0) return formatMoney(0);
+  return `${value > 0 ? "+" : "−"}${formatMoney(Math.abs(value))}`;
+}
+
 export function formatMoneyCompact(value: number): string {
   if (value >= 1_000_000_000) return `Rp${(value / 1_000_000_000).toFixed(1).replace(".", ",")} M`;
   if (value >= 1_000_000) return `Rp${(value / 1_000_000).toFixed(1).replace(".", ",")} jt`;
@@ -162,6 +167,29 @@ export const unitOptions = [
 
 export function isFractionalUnit(unit: string): boolean {
   return ["kg", "gram", "liter", "ml", "meter"].includes(unit.toLowerCase());
+}
+
+export function isScaleUnit(unit: string): boolean {
+  return ["kg", "gram"].includes(unit.trim().toLowerCase());
+}
+
+export const scaleRoundingOptions = [
+  { value: 0, label: "Tanpa pembulatan" },
+  { value: 100, label: "Rp100 terdekat" },
+  { value: 500, label: "Rp500 terdekat" },
+  { value: 1000, label: "Rp1.000 terdekat" },
+] as const;
+
+/**
+ * Membulatkan nominal ke kelipatan terdekat, dihitung dalam satuan sen
+ * agar angka desimal tidak bergeser karena floating point.
+ */
+export function roundToScaleStepValue(value: number, step: number): number {
+  if (!Number.isFinite(value) || !Number.isFinite(step) || step <= 0) return value;
+  const cents = Math.round(value * 100);
+  const stepCents = Math.round(step * 100);
+  if (stepCents <= 0) return value;
+  return (Math.round(cents / stepCents) * stepCents) / 100;
 }
 
 export function quantityStep(unit: string): number {
