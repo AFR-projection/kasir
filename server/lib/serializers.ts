@@ -93,6 +93,23 @@ export interface TransactionItemDto {
   lineTotal: number;
 }
 
+export interface CategoryRevenueDto {
+  categoryId: string | null;
+  categoryName: string;
+  revenue: number;
+  share: number;
+  transactionCount: number;
+  itemCount: number;
+}
+
+export interface CategoryRevenueReportDto {
+  totalRevenue: number;
+  transactionCount: number;
+  itemCount: number;
+  categoryCount: number;
+  categories: CategoryRevenueDto[];
+}
+
 export interface StoreDto {
   storeName: string;
   storeAddress: string | null;

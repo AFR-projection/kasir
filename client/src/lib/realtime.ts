@@ -17,12 +17,13 @@ const eventInvalidationMap: Record<string, string[][]> = {
   "product.updated": [["products"], ["categories"], ["dashboard"], ["stock-movements"]],
   "product.deleted": [["products"], ["categories"], ["dashboard"], ["stock-movements"]],
   "category.created": [["categories"], ["products"], ["dashboard"]],
-  "category.updated": [["categories"], ["products"], ["dashboard"]],
-  "category.deleted": [["categories"], ["products"], ["dashboard"]],
+  "category.updated": [["categories"], ["products"], ["dashboard"], ["category-report"]],
+  "category.deleted": [["categories"], ["products"], ["dashboard"], ["category-report"]],
   "stock.adjusted": [["products"], ["dashboard"], ["stock-movements"], ["categories"]],
   "transaction.created": [
     ["transactions"],
     ["transaction"],
+    ["category-report"],
     ["dashboard"],
     ["products"],
     ["stock-movements"],
@@ -31,6 +32,7 @@ const eventInvalidationMap: Record<string, string[][]> = {
   "transaction.voided": [
     ["transactions"],
     ["transaction"],
+    ["category-report"],
     ["dashboard"],
     ["products"],
     ["stock-movements"],

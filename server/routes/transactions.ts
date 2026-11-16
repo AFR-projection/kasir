@@ -9,6 +9,8 @@ import { emitEvent } from "../lib/realtime";
 import { getStore } from "../lib/store";
 import {
   mapTransactionSummary,
+  type CategoryRevenueDto,
+  type CategoryRevenueReportDto,
   type TransactionSummaryRow,
   type TransactionDetailDto,
   type TransactionItemDto,
@@ -52,11 +54,21 @@ interface TransactionItemRow {
 interface LockedProductRow {
   id: string;
   name: string;
+  category_id: string;
+  category_name: string;
   cost_price: number;
   selling_price: number;
   stock: number;
   unit: string;
   is_active: boolean;
+}
+
+interface CategoryRevenueRow {
+  category_id: string | null;
+  category_name: string;
+  revenue: number;
+  transaction_count: number;
+  item_count: number;
 }
 
 async function getTransactionDetailById(id: string): Promise<TransactionDetailDto | null> {
@@ -222,6 +234,106 @@ transactionsRouter.get(
   }),
 );
 
+const categoryReportQuerySchema = z.object({
+  search: z.string().trim().max(100).optional(),
+  dateFrom: dateInputSchema.optional(),
+  dateTo: dateInputSchema.optional(),
+});
+
+transactionsRouter.get(
+  "/category-report",
+  requireOwner,
+  asyncHandler(async (req, res) => {
+    const query = categoryReportQuerySchema.parse(req.query);
+    const conditions: string[] = ["t.status = 'completed'"];
+    const values: unknown[] = [];
+    let timezoneParam: number | null = null;
+
+    const timezoneRef = () => {
+      if (!timezoneParam) {
+        values.push(config.storeTimezone);
+        timezoneParam = values.length;
+      }
+      return `$${timezoneParam}`;
+    };
+
+    if (query.search) {
+      values.push(`%${query.search.replace(/[\\%_]/g, "\\$&")}%`);
+      conditions.push(
+        `(t.invoice_number ILIKE $${values.length} ESCAPE '\\' OR u.name ILIKE $${values.length} ESCAPE '\\')`,
+      );
+    }
+    if (query.dateFrom) {
+      const timezone = timezoneRef();
+      values.push(query.dateFrom);
+      conditions.push(`(t.created_at AT TIME ZONE ${timezone})::date >= $${values.length}::date`);
+    }
+    if (query.dateTo) {
+      const timezone = timezoneRef();
+      values.push(query.dateTo);
+      conditions.push(`(t.created_at AT TIME ZONE ${timezone})::date <= $${values.length}::date`);
+    }
+
+    const where = `WHERE ${conditions.join(" AND ")}`;
+    const [summaryResult, categoryResult] = await Promise.all([
+      pool.query<{
+        total_revenue: number;
+        transaction_count: number;
+        item_count: number;
+      }>(
+        `SELECT COALESCE(SUM(ti.line_total), 0)::numeric AS total_revenue,
+                COUNT(DISTINCT t.id)::int AS transaction_count,
+                COUNT(ti.id)::int AS item_count
+         FROM transaction_items ti
+         JOIN transactions t ON t.id = ti.transaction_id
+         JOIN users u ON u.id = t.cashier_id
+         ${where}`,
+        values,
+      ),
+      pool.query<CategoryRevenueRow>(
+        `SELECT ti.category_id,
+                COALESCE(c.name, ti.category_name) AS category_name,
+                SUM(ti.line_total)::numeric AS revenue,
+                COUNT(DISTINCT ti.transaction_id)::int AS transaction_count,
+                COUNT(ti.id)::int AS item_count
+         FROM transaction_items ti
+         JOIN transactions t ON t.id = ti.transaction_id
+         JOIN users u ON u.id = t.cashier_id
+         LEFT JOIN categories c ON c.id = ti.category_id
+         ${where}
+         GROUP BY ti.category_id, COALESCE(c.name, ti.category_name)
+         ORDER BY revenue DESC, category_name ASC`,
+        values,
+      ),
+    ]);
+
+    const summary = summaryResult.rows[0];
+    const totalRevenue = Number(summary?.total_revenue ?? 0);
+    const categories: CategoryRevenueDto[] = categoryResult.rows.map((row) => {
+      const revenue = Number(row.revenue);
+      return {
+        categoryId: row.category_id,
+        categoryName: row.category_name,
+        revenue,
+        share:
+          totalRevenue > 0 ? Math.round((revenue / totalRevenue) * 1000) / 10 : 0,
+        transactionCount: Number(row.transaction_count),
+        itemCount: Number(row.item_count),
+      };
+    });
+
+    const report: CategoryRevenueReportDto = {
+      totalRevenue,
+      transactionCount: Number(summary?.transaction_count ?? 0),
+      itemCount: Number(summary?.item_count ?? 0),
+      categoryCount: categories.length,
+      categories,
+    };
+
+    res.json({ report });
+  }),
+);
+
 transactionsRouter.get(
   "/:id",
   asyncHandler(async (req, res) => {
@@ -313,11 +425,13 @@ transactionsRouter.post(
         const scaleRounding = Number(settingsResult.rows[0]?.scale_rounding ?? 0);
 
         const productsResult = await client.query<LockedProductRow>(
-          `SELECT id, name, cost_price, selling_price, stock, unit, is_active
-           FROM products
-           WHERE id = ANY($1::uuid[]) AND deleted_at IS NULL
-           ORDER BY id
-           FOR UPDATE`,
+          `SELECT p.id, p.name, p.category_id, c.name AS category_name,
+                  p.cost_price, p.selling_price, p.stock, p.unit, p.is_active
+           FROM products p
+           JOIN categories c ON c.id = p.category_id
+           WHERE p.id = ANY($1::uuid[]) AND p.deleted_at IS NULL
+           ORDER BY p.id
+           FOR UPDATE OF p`,
           [productIds],
         );
 
@@ -430,14 +544,16 @@ transactionsRouter.post(
         for (const [index, item] of saleItems.entries()) {
           await client.query(
             `INSERT INTO transaction_items
-               (transaction_id, product_id, product_name, unit, quantity, list_unit_price,
-                unit_price, unit_cost, discount_amount, rounding_amount, negotiation_mode,
-                line_total, line_number)
-             VALUES ($1, $2, $3, $4, $5, $6, $7, $8, $9, $10, $11, $12, $13)`,
+               (transaction_id, product_id, product_name, category_id, category_name, unit,
+                quantity, list_unit_price, unit_price, unit_cost, discount_amount,
+                rounding_amount, negotiation_mode, line_total, line_number)
+             VALUES ($1, $2, $3, $4, $5, $6, $7, $8, $9, $10, $11, $12, $13, $14, $15)`,
             [
               transactionId,
               item.product.id,
               item.product.name,
+              item.product.category_id,
+              item.product.category_name,
               item.product.unit,
               item.quantity.toFixed(3),
               item.listUnitPrice.toFixed(2),

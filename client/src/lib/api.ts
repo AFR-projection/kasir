@@ -10,6 +10,8 @@ import type {
   CashSessionListResponse,
   CashSessionQuery,
   Category,
+  CategoryRevenueQuery,
+  CategoryRevenueReport,
   CheckoutInput,
   CheckoutResponse,
   CloseCashSessionInput,
@@ -193,6 +195,8 @@ export const api = {
   transactions: {
     list: (params: TransactionQuery = {}) =>
       request<TransactionListResponse>(`/transactions${toQuery(params)}`),
+    categoryReport: (params: CategoryRevenueQuery = {}) =>
+      request<{ report: CategoryRevenueReport }>(`/transactions/category-report${toQuery(params)}`),
     get: (id: string) => request<{ transaction: TransactionDetail }>(`/transactions/${id}`),
     checkout: (input: CheckoutInput) =>
       request<CheckoutResponse>("/transactions", { method: "POST", body: input }),

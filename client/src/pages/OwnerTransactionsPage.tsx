@@ -3,6 +3,8 @@ import { useQuery, useQueryClient } from "@tanstack/react-query";
 import {
   Ban,
   CalendarRange,
+  ChartPie,
+  Info,
   LockKeyhole,
   ReceiptText,
   RotateCcw,
@@ -12,6 +14,7 @@ import {
 } from "lucide-react";
 import { api } from "../lib/api";
 import type {
+  CategoryRevenue,
   PaymentMethod,
   TransactionDetail,
   TransactionStatus,
@@ -58,6 +61,37 @@ function statusLabel(status: TransactionStatus, voidType: VoidType | null): stri
   return "Selesai";
 }
 
+const categoryTones = ["green", "amber", "blue", "purple", "red"] as const;
+type CategoryTone = (typeof categoryTones)[number];
+
+function categoryTone(index: number): CategoryTone {
+  return categoryTones[index % categoryTones.length];
+}
+
+const reportDateFormatter = new Intl.DateTimeFormat("id-ID", {
+  day: "2-digit",
+  month: "short",
+  year: "numeric",
+});
+
+const shareFormatter = new Intl.NumberFormat("id-ID", {
+  maximumFractionDigits: 1,
+});
+
+function formatReportDate(value: string): string {
+  const [year, month, day] = value.split("-").map(Number);
+  if (!year || !month || !day) return value;
+  return reportDateFormatter.format(new Date(year, month - 1, day));
+}
+
+function formatShare(value: number): string {
+  return `${shareFormatter.format(value)}%`;
+}
+
+function categoryKey(category: CategoryRevenue): string {
+  return `${category.categoryId ?? "tanpa-kategori"}:${category.categoryName}`;
+}
+
 export function OwnerTransactionsPage() {
   const toast = useToast();
   const queryClient = useQueryClient();
@@ -82,6 +116,16 @@ export function OwnerTransactionsPage() {
         status,
         page,
         limit: 20,
+      }),
+  });
+
+  const categoryReportQuery = useQuery({
+    queryKey: ["category-report", { search: debouncedSearch, dateFrom, dateTo }],
+    queryFn: () =>
+      api.transactions.categoryReport({
+        search: debouncedSearch || undefined,
+        dateFrom: dateFrom || undefined,
+        dateTo: dateTo || undefined,
       }),
   });
 
@@ -127,6 +171,17 @@ export function OwnerTransactionsPage() {
   const average =
     summary && summary.completedCount > 0 ? summary.totalSales / summary.completedCount : 0;
   const hasFilters = search || dateFrom || dateTo || status !== "all";
+  const categoryReport = categoryReportQuery.data?.report;
+  const reportRangeLabel =
+    dateFrom && dateTo
+      ? dateFrom === dateTo
+        ? formatReportDate(dateFrom)
+        : `${formatReportDate(dateFrom)} - ${formatReportDate(dateTo)}`
+      : dateFrom
+        ? `sejak ${formatReportDate(dateFrom)}`
+        : dateTo
+          ? `sampai ${formatReportDate(dateTo)}`
+          : "semua waktu";
 
   return (
     <div className="page-stack">
@@ -172,6 +227,100 @@ export function OwnerTransactionsPage() {
           </div>
         </div>
       </div>
+
+      <section className="panel category-report" aria-labelledby="category-report-title">
+        <div className="category-report__header">
+          <div className="category-report__heading">
+            <span className="category-report__icon">
+              <ChartPie size={20} />
+            </span>
+            <div>
+              <p className="panel__eyebrow">Analisis penjualan</p>
+              <h2 id="category-report-title">Pendapatan per Kategori</h2>
+              <p className="category-report__description">
+                Transaksi selesai pada {reportRangeLabel}
+                {debouncedSearch ? ` untuk pencarian "${debouncedSearch}"` : ""}. Void dan retur
+                tidak dihitung.
+              </p>
+            </div>
+          </div>
+          <div className="category-report__total">
+            <span>Total pendapatan</span>
+            <strong>{categoryReport ? formatMoney(categoryReport.totalRevenue) : "-"}</strong>
+            <small>
+              {categoryReport
+                ? `${categoryReport.categoryCount} kategori · ${categoryReport.transactionCount} transaksi`
+                : "Menghitung pendapatan..."}
+            </small>
+          </div>
+        </div>
+
+        {categoryReportQuery.isLoading ? (
+          <PageLoader label="Menghitung pendapatan per kategori..." />
+        ) : categoryReportQuery.isError ? (
+          <PageError
+            message={getErrorMessage(categoryReportQuery.error)}
+            onRetry={() => void categoryReportQuery.refetch()}
+          />
+        ) : categoryReport && categoryReport.categories.length > 0 ? (
+          <div className="category-report__body">
+            <div
+              className="category-mix"
+              role="img"
+              aria-label={`Komposisi pendapatan: ${categoryReport.categories
+                .map((category) => `${category.categoryName} ${formatShare(category.share)}`)
+                .join(", ")}`}
+            >
+              {categoryReport.categories.map((category, index) => (
+                <span
+                  key={categoryKey(category)}
+                  className={`category-mix__segment category-mix__segment--${categoryTone(index)}`}
+                  style={{ width: `${category.share}%` }}
+                />
+              ))}
+            </div>
+
+            <div className="category-revenue-list">
+              {categoryReport.categories.map((category, index) => (
+                <article
+                  key={categoryKey(category)}
+                  className={`category-revenue-card category-revenue-card--${categoryTone(index)}`}
+                >
+                  <div className="category-revenue-card__top">
+                    <span className="category-revenue-card__rank">{index + 1}</span>
+                    <div className="category-revenue-card__name">
+                      <strong>{category.categoryName}</strong>
+                      <span>
+                        {category.transactionCount} transaksi · {category.itemCount} baris item
+                      </span>
+                    </div>
+                    <div className="category-revenue-card__value">
+                      <strong>{formatMoney(category.revenue)}</strong>
+                      <span>{formatShare(category.share)} dari pendapatan</span>
+                    </div>
+                  </div>
+                  <div className="category-revenue-card__bar" aria-hidden="true">
+                    <span style={{ width: `${category.share}%` }} />
+                  </div>
+                </article>
+              ))}
+            </div>
+
+            <p className="category-report__footnote">
+              <Info size={14} />
+              Pendapatan kategori mengikuti total baris item, termasuk nego dan pembulatan
+              timbangan. Persentase dihitung dari total pendapatan pada rentang tanggal ini.
+            </p>
+          </div>
+        ) : (
+          <EmptyState
+            compact
+            icon={<ChartPie size={23} />}
+            title="Belum ada pendapatan kategori"
+            description="Belum ada transaksi selesai pada rentang tanggal dan pencarian ini. Coba ubah filter atau pilih rentang tanggal lain."
+          />
+        )}
+      </section>
 
       <section className="panel">
         <div className="transaction-toolbar">
@@ -405,6 +554,7 @@ export function OwnerTransactionsPage() {
               current && current.id === transaction.id ? transaction : current,
             );
             void queryClient.invalidateQueries({ queryKey: ["transactions"] });
+            void queryClient.invalidateQueries({ queryKey: ["category-report"] });
             void queryClient.invalidateQueries({ queryKey: ["transaction"] });
             void queryClient.invalidateQueries({ queryKey: ["dashboard"] });
             void queryClient.invalidateQueries({ queryKey: ["products"] });

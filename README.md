@@ -23,6 +23,7 @@ Semua data disimpan di **Neon PostgreSQL**. Tidak ada data dummy atau penyimpana
 - **Beberapa baris untuk produk yang sama**: klik produk yang sama lagi untuk menambah baris baru; setiap baris punya jumlah dan nego sendiri. Stok tetap divalidasi dan dikurangi sekali per produk, sedangkan struk dan laporan menyimpan setiap baris sesuai urutan input.
 - **Keranjang ditahan (hold cart)**: kasir dapat memarkir keranjang beserta jumlah dan nego, melayani pelanggan lain, lalu melanjutkannya selama sesi kas masih terbuka. Maksimal 20 keranjang ditahan per sesi, dan kas tidak bisa ditutup sebelum semuanya dilanjutkan atau dihapus.
 - **Pembatalan & retur transaksi**: owner dapat membatalkan transaksi atau mencatat retur selama sesi kas transaksi masih terbuka. Stok dikembalikan, alasan wajib diisi, pelaku dan waktu disimpan untuk audit, dan transaksi tidak lagi dihitung dalam laporan penjualan maupun rekap kas.
+- **Laporan pendapatan per kategori**: halaman transaksi owner memisahkan pendapatan tiap kategori pada rentang tanggal yang dipilih, lengkap dengan porsi persentase, jumlah transaksi, dan jumlah baris item. Transaksi void/retur selalu dikecualikan.
 - Checkout diblokir selama kas belum dibuka atau sudah ditutup.
 - Idempotensi checkout melalui `clientReference` untuk mencegah transaksi ganda.
 - Real-time sync dengan SSE pada server biasa, dan polling otomatis pada Vercel/serverless.
@@ -269,6 +270,18 @@ Produk memakai **soft delete** (`deleted_at`) agar produk yang sudah pernah terj
 
 ---
 
+## Laporan Pendapatan per Kategori
+
+Halaman **Transaksi** milik owner menampilkan panel pendapatan per kategori di atas daftar transaksi. Panel mengikuti filter tanggal dan pencarian yang aktif, tetapi selalu hanya menghitung transaksi berstatus `completed`; transaksi void/retur tidak pernah masuk ke laporan.
+
+- Pendapatan kategori berasal dari `SUM(transaction_items.line_total)`, sehingga totalnya konsisten dengan total transaksi setelah nego dan pembulatan timbangan.
+- Setiap baris transaksi menyimpan snapshot `category_id` dan `category_name` saat checkout. Jika produk dipindahkan ke kategori lain, riwayat lama tetap berada di kategori saat penjualan terjadi. Jika kategori masih ada dan namanya diubah, laporan menampilkan nama kategori terbaru.
+- Transaksi yang sudah ada sebelum migrasi `009_transaction_category_snapshot` diisi dari kategori produk saat migrasi dijalankan; transaksi baru selalu memakai snapshot saat checkout.
+- Respons juga menyertakan porsi persentase, jumlah transaksi unik, dan jumlah baris item per kategori.
+- Endpoint: `GET /api/transactions/category-report?dateFrom=YYYY-MM-DD&dateTo=YYYY-MM-DD&search=...` (khusus owner).
+
+---
+
 ## Upload Gambar
 
 - Endpoint upload hanya dapat diakses owner.
@@ -505,6 +518,7 @@ Semua endpoint berada di bawah `/api`. Endpoint selain setup dan login memerluka
 | `/api/cash-sessions/:id/close` | Kasir | Menutup sesi dengan uang hitung dan catatan selisih. |
 | `/api/cash-sessions` | Owner | Riwayat dan ringkasan seluruh sesi kas. |
 | `/api/transactions` | Owner/Kasir | Checkout khusus kasir; owner melihat semua, kasir hanya miliknya. |
+| `/api/transactions/category-report` | Owner | Pendapatan per kategori pada rentang tanggal; transaksi void/retur dikecualikan. |
 | `/api/transactions/:id/void` | Owner | Membatalkan atau meretur transaksi beserta pengembalian stok; alasan wajib. |
 | `/api/held-carts` | Kasir | Membuat dan mendaftar keranjang ditahan pada sesi kas aktif. |
 | `/api/held-carts/:id/resume` | Kasir | Mengambil keranjang ditahan secara atomik dan menghapus hold. |

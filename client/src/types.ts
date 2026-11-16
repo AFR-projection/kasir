@@ -205,6 +205,29 @@ export interface TransactionListResponse {
   };
 }
 
+export interface CategoryRevenue {
+  categoryId: string | null;
+  categoryName: string;
+  revenue: number;
+  share: number;
+  transactionCount: number;
+  itemCount: number;
+}
+
+export interface CategoryRevenueReport {
+  totalRevenue: number;
+  transactionCount: number;
+  itemCount: number;
+  categoryCount: number;
+  categories: CategoryRevenue[];
+}
+
+export interface CategoryRevenueQuery {
+  search?: string;
+  dateFrom?: string;
+  dateTo?: string;
+}
+
 export interface CheckoutInput {
   items: Array<{ productId: string; quantity: number; unitPrice?: number; negotiatedTotal?: number }>;
   paymentMethod: PaymentMethod;

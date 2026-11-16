@@ -414,6 +414,31 @@ const voidAndHeldCartsSchema: Migration = {
   `,
 };
 
+const transactionCategorySnapshotSchema: Migration = {
+  name: "009_transaction_category_snapshot",
+  sql: `
+    -- Simpan kategori saat transaksi terjadi. Produk dapat dipindahkan ke
+    -- kategori lain atau kategori dihapus, tetapi laporan historis harus tetap
+    -- mencerminkan kategori yang berlaku ketika barang terjual.
+    ALTER TABLE transaction_items
+      ADD COLUMN category_id UUID REFERENCES categories(id) ON DELETE SET NULL,
+      ADD COLUMN category_name VARCHAR(80);
+
+    UPDATE transaction_items ti
+    SET category_id = p.category_id,
+        category_name = c.name
+    FROM products p
+    JOIN categories c ON c.id = p.category_id
+    WHERE ti.product_id = p.id;
+
+    ALTER TABLE transaction_items
+      ALTER COLUMN category_name SET NOT NULL;
+
+    CREATE INDEX transaction_items_category_idx
+      ON transaction_items (category_id);
+  `,
+};
+
 const scaleRoundingSchema: Migration = {
   name: "006_scale_rounding",
   sql: `
@@ -451,4 +476,5 @@ export const migrations: Migration[] = [
   scaleRoundingSchema,
   negotiationModeSchema,
   voidAndHeldCartsSchema,
+  transactionCategorySnapshotSchema,
 ];
