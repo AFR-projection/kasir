@@ -8,7 +8,6 @@ import {
   CircleAlert,
   CirclePause,
   ClipboardList,
-  CopyPlus,
   CreditCard,
   Minus,
   PackageSearch,
@@ -285,49 +284,9 @@ export function CashierPage() {
     });
   const cartLineCount = cartView.length;
 
-  const addToCart = (product: Product) => {
+  const addLine = (product: Product) => {
     if (product.stock <= 0 || !product.isActive) return;
     setCart((current) => {
-      const step = quantityStep(product.unit);
-      const lines = current.filter((line) => line.productId === product.id);
-      const aggregate = roundQuantityValue(
-        lines.reduce((sum, line) => sum + line.quantity, 0),
-      );
-      if (aggregate >= product.stock) {
-        toast.info(`Stok ${product.name} hanya tersisa ${formatQuantity(product.stock)} ${product.unit}.`);
-        return current;
-      }
-
-      const target = lines[lines.length - 1];
-      if (target) {
-        const remainingForTarget = roundQuantityValue(product.stock - (aggregate - target.quantity));
-        const nextQuantity = roundQuantityValue(Math.min(target.quantity + step, remainingForTarget));
-        if (nextQuantity <= target.quantity) {
-          toast.info(`Stok ${product.name} hanya tersisa ${formatQuantity(product.stock)} ${product.unit}.`);
-          return current;
-        }
-        if (target.negotiatedTotal !== undefined) {
-          toast.info(`Nego total ${product.name} direset karena jumlah berubah.`);
-        }
-        return current.map((line) =>
-          line.lineId === target.lineId
-            ? { ...line, quantity: nextQuantity, negotiatedTotal: undefined }
-            : line,
-        );
-      }
-
-      const initialQuantity = roundQuantityValue(Math.min(step, product.stock));
-      return [
-        ...current,
-        { lineId: createLineId(), productId: product.id, quantity: initialQuantity },
-      ];
-    });
-  };
-
-  const addNewLine = (product: Product) => {
-    if (product.stock <= 0 || !product.isActive) return;
-    setCart((current) => {
-      const step = quantityStep(product.unit);
       const aggregate = roundQuantityValue(
         current
           .filter((line) => line.productId === product.id)
@@ -338,8 +297,11 @@ export function CashierPage() {
         toast.info(`Stok ${product.name} sudah seluruhnya masuk keranjang.`);
         return current;
       }
-      const initialQuantity = roundQuantityValue(Math.min(step, remaining));
-      toast.info(`Baris terpisah untuk ${product.name} ditambahkan.`);
+
+      // Setiap klik produk membuat baris baru, bukan menambah jumlah baris
+      // lama. Jumlah awal 1 unit agar kasir bisa langsung menyesuaikan berat
+      // atau jumlah pada baris tersebut.
+      const initialQuantity = roundQuantityValue(Math.min(1, remaining));
       return [
         ...current,
         { lineId: createLineId(), productId: product.id, quantity: initialQuantity },
@@ -677,60 +639,48 @@ export function CashierPage() {
               const inCart = cartQuantityByProduct.get(product.id) ?? 0;
               const soldOut = product.stock <= 0;
               return (
-                <div className="pos-product-card-wrap" key={product.id}>
-                  <button
-                    type="button"
-                    className={`pos-product-card${soldOut ? " pos-product-card--soldout" : ""}`}
-                    onClick={() => addToCart(product)}
-                    disabled={soldOut}
-                    aria-label={`Tambah ${product.name} ke keranjang`}
-                  >
-                    <div className="pos-product-card__image-wrap">
-                      <ProductImage src={product.imageUrl} name={product.name} size="lg" />
-                      {soldOut ? (
-                        <span className="pos-product-card__stock pos-product-card__stock--out">Habis</span>
-                      ) : product.lowStock ? (
-                        <span className="pos-product-card__stock pos-product-card__stock--low">
-                          Sisa {formatQuantity(product.stock)} {product.unit}
-                        </span>
-                      ) : (
-                        <span className="pos-product-card__stock">
-                          {formatQuantity(product.stock)} {product.unit}
+                <button
+                  type="button"
+                  className={`pos-product-card${soldOut ? " pos-product-card--soldout" : ""}`}
+                  key={product.id}
+                  onClick={() => addLine(product)}
+                  disabled={soldOut}
+                  aria-label={`Tambah baris ${product.name} ke keranjang`}
+                  title="Klik lagi untuk menambah baris terpisah"
+                >
+                  <div className="pos-product-card__image-wrap">
+                    <ProductImage src={product.imageUrl} name={product.name} size="lg" />
+                    {soldOut ? (
+                      <span className="pos-product-card__stock pos-product-card__stock--out">Habis</span>
+                    ) : product.lowStock ? (
+                      <span className="pos-product-card__stock pos-product-card__stock--low">
+                        Sisa {formatQuantity(product.stock)} {product.unit}
+                      </span>
+                    ) : (
+                      <span className="pos-product-card__stock">
+                        {formatQuantity(product.stock)} {product.unit}
+                      </span>
+                    )}
+                    {inCart > 0 && (
+                      <span className="pos-product-card__in-cart">{formatQuantity(inCart)} di keranjang</span>
+                    )}
+                  </div>
+                  <div className="pos-product-card__body">
+                    <span className="pos-product-card__category">{product.categoryName}</span>
+                    <strong>{product.name}</strong>
+                    <div className="pos-product-card__price">
+                      <span>
+                        {formatMoney(product.sellingPrice)}
+                        <small> / {product.unit}</small>
+                      </span>
+                      {!soldOut && (
+                        <span className="pos-product-card__add">
+                          <Plus size={16} />
                         </span>
                       )}
-                      {inCart > 0 && (
-                        <span className="pos-product-card__in-cart">{formatQuantity(inCart)} di keranjang</span>
-                      )}
                     </div>
-                    <div className="pos-product-card__body">
-                      <span className="pos-product-card__category">{product.categoryName}</span>
-                      <strong>{product.name}</strong>
-                      <div className="pos-product-card__price">
-                        <span>
-                          {formatMoney(product.sellingPrice)}
-                          <small> / {product.unit}</small>
-                        </span>
-                        {!soldOut && (
-                          <span className="pos-product-card__add">
-                            <Plus size={16} />
-                          </span>
-                        )}
-                      </div>
-                    </div>
-                  </button>
-                  {inCart > 0 && !soldOut && inCart < product.stock && (
-                    <button
-                      type="button"
-                      className="pos-product-card__new-line"
-                      onClick={() => addNewLine(product)}
-                      aria-label={`Tambah baris terpisah untuk ${product.name}`}
-                      title="Tambah baris dengan jumlah dan nego terpisah"
-                    >
-                      <CopyPlus size={13} />
-                      Baris baru
-                    </button>
-                  )}
-                </div>
+                  </div>
+                </button>
               );
             })}
           </div>

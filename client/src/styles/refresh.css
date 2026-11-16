@@ -4963,40 +4963,6 @@ b {
   background: var(--brand);
 }
 
-.pos-product-card-wrap {
-  display: flex;
-  min-width: 0;
-  flex-direction: column;
-  align-items: stretch;
-}
-
-.pos-product-card-wrap > .pos-product-card {
-  width: 100%;
-}
-
-.pos-product-card__new-line {
-  display: inline-flex;
-  align-self: flex-start;
-  align-items: center;
-  gap: 4px;
-  margin-top: 7px;
-  padding: 4px 6px;
-  border-radius: 6px;
-  color: var(--brand);
-  font-size: 10.5px;
-  font-weight: 700;
-  transition: background 0.16s ease, color 0.16s ease;
-}
-
-.pos-product-card__new-line:hover {
-  color: var(--brand-deep);
-  background: var(--brand-soft);
-}
-
-.pos-product-card__new-line svg {
-  color: var(--gold-dark);
-}
-
 .pos-cart__hold-action {
   display: inline-flex;
   align-items: center;
